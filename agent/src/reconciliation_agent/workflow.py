@@ -81,8 +81,7 @@ def _message_text(message: AnyMessage) -> str:
     if isinstance(content, str):
         return content
     return "".join(
-        item if isinstance(item, str) else str(item.get("text", ""))
-        for item in content
+        item if isinstance(item, str) else str(item.get("text", "")) for item in content
     )
 
 
@@ -92,7 +91,9 @@ def parse_request(state: AgentState) -> dict[str, Any]:
     match = _CASE_ID_PATTERN.search(question.upper())
     case_id = match.group(0) if match else None
     intent: Literal["ANALYZE", "RESOLVE"] = (
-        "RESOLVE" if any(word in question for word in ("解决", "处理", "结案")) else "ANALYZE"
+        "RESOLVE"
+        if any(word in question for word in ("解决", "处理", "结案"))
+        else "ANALYZE"
     )
     return {
         "case_id": case_id,
@@ -102,7 +103,9 @@ def parse_request(state: AgentState) -> dict[str, Any]:
         "collected_facts": {},
         "citations": [],
         "evidence_status": (
-            EvidenceStatus.UNKNOWN.value if case_id else EvidenceStatus.MISSING_CASE.value
+            EvidenceStatus.UNKNOWN.value
+            if case_id
+            else EvidenceStatus.MISSING_CASE.value
         ),
         "budget_exhausted": False,
         "run_persisted": False,
@@ -200,9 +203,7 @@ def _collect_tool_evidence(
     return facts, citations, errors
 
 
-def _has_required_structured_facts(
-    case: dict[str, Any], facts: dict[str, Any]
-) -> bool:
+def _has_required_structured_facts(case: dict[str, Any], facts: dict[str, Any]) -> bool:
     result_type = case.get("result_type")
     payments = facts.get("payments")
     ledger = facts.get("ledger")
@@ -370,7 +371,9 @@ def finalize(state: AgentState) -> dict[str, Any]:
             "citations": state.get("citations", []),
             "resolution_recommendation": state.get("proposed_resolution"),
         }
-    elif state.get("evidence_status") == EvidenceStatus.COMPLETE and isinstance(draft, dict):
+    elif state.get("evidence_status") == EvidenceStatus.COMPLETE and isinstance(
+        draft, dict
+    ):
         response = {
             "status": "READY",
             "case_id": state.get("case_id"),
@@ -465,8 +468,9 @@ def build_graph(
     async def collect_case_facts(state: AgentState) -> dict[str, Any]:
         nonlocal resolved_model
         try:
+            settings = get_settings()
             if resolved_model is None:
-                resolved_model = build_chat_model(get_settings())
+                resolved_model = build_chat_model(settings)
             bound_model = resolved_model.bind_tools(tool_list)
             prompt = SYSTEM_PROMPT.format(
                 case_id=state.get("case_id") or "UNKNOWN",
@@ -478,6 +482,7 @@ def build_graph(
                     SystemMessage(content=prompt),
                     *_current_turn_messages(state["messages"]),
                 ],
+                max_retries=settings.model_max_retries,
             )
         except Exception as error:
             return fail_run(state, error)
@@ -563,9 +568,7 @@ def build_graph(
         }
         return {
             "confirmation_request": {
-                "action_requests": [
-                    {"name": "resolve_case", "args": action_args}
-                ],
+                "action_requests": [{"name": "resolve_case", "args": action_args}],
                 "review_configs": [
                     {
                         "action_name": "resolve_case",

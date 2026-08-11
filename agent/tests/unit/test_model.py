@@ -42,6 +42,21 @@ async def test_timeout_is_retried_three_total_attempts() -> None:
 
 
 @pytest.mark.anyio
+async def test_timeout_retries_configured_count_plus_one_attempts() -> None:
+    model = ScriptedInvoker([TimeoutError("first")])
+
+    result = await invoke_model_with_retry(
+        model,
+        [],
+        max_retries=1,
+        sleep=lambda _delay: _completed_sleep(),
+    )
+
+    assert result.content == "ok"
+    assert model.attempts == 2
+
+
+@pytest.mark.anyio
 async def test_validation_error_is_not_retried() -> None:
     model = ScriptedInvoker([ValueError("invalid request")])
 
@@ -53,3 +68,7 @@ async def test_validation_error_is_not_retried() -> None:
 
 async def _unexpected_sleep(_delay: float) -> Any:
     raise AssertionError("non-retryable errors must not sleep")
+
+
+async def _completed_sleep() -> None:
+    return None

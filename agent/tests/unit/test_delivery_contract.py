@@ -30,6 +30,7 @@ def test_root_environment_template_contains_delivery_configuration() -> None:
         "MODEL_API_KEY",
         "MODEL_NAME",
         "MODEL_TIMEOUT_SECONDS",
+        "MODEL_MAX_OUTPUT_TOKENS",
         "MODEL_MAX_RETRIES",
         "MAX_TOOL_CALLS",
         "EMBEDDING_MODEL",
@@ -41,6 +42,8 @@ def test_root_environment_template_contains_delivery_configuration() -> None:
         assert variable in values
 
     assert values["MODEL_API_KEY"] == ""
+    assert values["MODEL_MAX_OUTPUT_TOKENS"] == "2048"
+    assert values["MODEL_MAX_RETRIES"] == "2"
 
     for removed_variable in (
         "TAVILY_API_KEY",
@@ -62,6 +65,7 @@ def test_agent_environment_template_matches_local_backend_contract() -> None:
         "MODEL_API_KEY",
         "MODEL_NAME",
         "MODEL_TIMEOUT_SECONDS",
+        "MODEL_MAX_OUTPUT_TOKENS",
         "MODEL_MAX_RETRIES",
         "MAX_TOOL_CALLS",
         "EMBEDDING_MODEL",
@@ -72,6 +76,8 @@ def test_agent_environment_template_matches_local_backend_contract() -> None:
         assert variable in values
 
     assert "root .env.example" in contents
+    assert values["MODEL_MAX_OUTPUT_TOKENS"] == "2048"
+    assert values["MODEL_MAX_RETRIES"] == "2"
     for removed_variable in (
         "TAVILY_API_KEY",
         "ANTHROPIC_API_KEY",

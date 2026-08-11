@@ -31,6 +31,8 @@ def test_settings_load_model_and_database_values_from_environment(
     monkeypatch.setenv("MODEL_BASE_URL", "https://model.example.test/v1")
     monkeypatch.setenv("MODEL_API_KEY", model_api_key)
     monkeypatch.setenv("MODEL_NAME", "ledger-model")
+    monkeypatch.setenv("MODEL_MAX_RETRIES", "1")
+    monkeypatch.setenv("MODEL_MAX_OUTPUT_TOKENS", "512")
     monkeypatch.setenv(
         "DATABASE_URL", "postgresql+psycopg://agent:password@localhost/agent"
     )
@@ -40,6 +42,8 @@ def test_settings_load_model_and_database_values_from_environment(
         settings = get_settings()
         assert settings.model_base_url == "https://model.example.test/v1"
         assert settings.model_name == "ledger-model"
+        assert settings.model_max_retries == 1
+        assert settings.model_max_output_tokens == 512
         assert isinstance(settings.model_api_key, SecretStr)
         assert settings.model_api_key.get_secret_value() == model_api_key
         assert settings.database_url_for_sqlalchemy.endswith("@localhost/agent")

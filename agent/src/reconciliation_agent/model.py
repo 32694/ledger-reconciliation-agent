@@ -55,12 +55,13 @@ async def invoke_model_with_retry(
     model: AsyncModelInvoker,
     messages: Sequence[BaseMessage],
     *,
+    max_retries: int = 2,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> AIMessage:
-    """Invoke a model at most three times for transient transport failures."""
+    """Invoke a model once plus the configured transient-failure retries."""
     retrying = AsyncRetrying(
         sleep=sleep,
-        stop=stop_after_attempt(3),
+        stop=stop_after_attempt(max_retries + 1),
         wait=wait_chain(wait_fixed(1), wait_fixed(2)),
         retry=retry_if_exception(_is_retryable_model_error),
         reraise=True,

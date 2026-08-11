@@ -27,6 +27,7 @@ class Settings(DatabaseSettings):
     model_name: str
     model_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     model_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
+    model_max_retries: int = Field(default=2, ge=0, le=10)
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     confirmation_ttl_seconds: int = Field(default=600, ge=60, le=3600)
     max_tool_calls: int = Field(default=8, ge=1, le=12)
