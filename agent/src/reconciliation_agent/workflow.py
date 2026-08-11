@@ -81,7 +81,8 @@ def _message_text(message: AnyMessage) -> str:
     if isinstance(content, str):
         return content
     return "".join(
-        item if isinstance(item, str) else str(item.get("text", "")) for item in content
+        item if isinstance(item, str) else str(item.get("text", ""))
+        for item in content
     )
 
 
@@ -468,9 +469,12 @@ def build_graph(
     async def collect_case_facts(state: AgentState) -> dict[str, Any]:
         nonlocal resolved_model
         try:
-            settings = get_settings()
             if resolved_model is None:
+                settings = get_settings()
                 resolved_model = build_chat_model(settings)
+                model_max_retries = settings.model_max_retries
+            else:
+                model_max_retries = 2
             bound_model = resolved_model.bind_tools(tool_list)
             prompt = SYSTEM_PROMPT.format(
                 case_id=state.get("case_id") or "UNKNOWN",
@@ -482,7 +486,7 @@ def build_graph(
                     SystemMessage(content=prompt),
                     *_current_turn_messages(state["messages"]),
                 ],
-                max_retries=settings.model_max_retries,
+                max_retries=model_max_retries,
             )
         except Exception as error:
             return fail_run(state, error)
@@ -568,7 +572,9 @@ def build_graph(
         }
         return {
             "confirmation_request": {
-                "action_requests": [{"name": "resolve_case", "args": action_args}],
+                "action_requests": [
+                    {"name": "resolve_case", "args": action_args}
+                ],
                 "review_configs": [
                     {
                         "action_name": "resolve_case",
