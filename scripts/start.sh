@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  printf '%s\n' 'Docker CLI or daemon is unavailable. Start Docker and try again.' >&2
+  exit 1
+fi
+
 if [[ ! -f .env ]]; then
   printf '%s\n' 'Missing root .env. Copy .env.example and add local model settings.' >&2
   exit 1

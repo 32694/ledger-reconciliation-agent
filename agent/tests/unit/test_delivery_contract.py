@@ -528,12 +528,18 @@ def test_delivery_scripts_are_executable_and_preserve_data() -> None:
     verify = (scripts_root / "verify.sh").read_text(encoding="utf-8")
     assert "set -euo pipefail" in start
     assert "docker compose --env-file .env" in start
+    assert "docker info" in start
     assert "docker compose --env-file .env stop" in stop
     assert "down -v" not in start + stop
     assert "--env-file /dev/null" in verify
     assert "reconciliation_agent.evaluation" in verify
     assert "/workspace/artifacts/evaluation.json" in verify
     assert "MODEL_API_KEY" not in verify
+    migration = "python -m reconciliation_agent.cli migrate"
+    assert migration in verify
+    assert verify.index(migration) < verify.index("python -m pytest -q")
+    assert "python -m ruff check src tests" in verify
+    assert "python -m mypy --strict src" in verify
 
 
 def test_delivery_artifacts_are_ignored() -> None:

@@ -28,6 +28,9 @@ for service in postgres-test agent-verify web-verify; do
   done
 done
 
+"${compose[@]}" exec -T agent-verify python -m reconciliation_agent.cli migrate
+"${compose[@]}" exec -T agent-verify python -m ruff check src tests
+"${compose[@]}" exec -T agent-verify python -m mypy --strict src
 "${compose[@]}" exec -T agent-verify python -m pytest -q
 "${compose[@]}" exec -T agent-verify python -m reconciliation_agent.evaluation \
   --mode scripted --output /workspace/artifacts/evaluation.json
