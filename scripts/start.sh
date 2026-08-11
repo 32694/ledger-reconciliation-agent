@@ -26,12 +26,13 @@ for variable in MODEL_BASE_URL MODEL_API_KEY MODEL_NAME; do
   fi
 done
 
-docker compose --env-file .env up --build -d postgres agent web
+compose=(docker compose --env-file .env -f "$ROOT_DIR/compose.yaml")
+"${compose[@]}" up --build -d postgres agent web
 
 deadline=$((SECONDS + ${START_TIMEOUT_SECONDS:-180}))
 for service in postgres agent web; do
   while :; do
-    container_id="$(docker compose --env-file .env ps -q "$service")"
+    container_id="$("${compose[@]}" ps -q "$service")"
     status=""
     if [[ -n "$container_id" ]]; then
       status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
@@ -40,7 +41,7 @@ for service in postgres agent web; do
       break
     fi
     if (( SECONDS >= deadline )); then
-      docker compose --env-file .env ps
+      "${compose[@]}" ps
       printf 'Timed out waiting for %s health\n' "$service" >&2
       exit 1
     fi

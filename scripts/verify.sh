@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 mkdir -p artifacts
 
-compose=(docker compose --env-file /dev/null)
+compose=(docker compose --project-name ledger-reconciliation-agent-verify -f "$ROOT_DIR/compose.yaml" --env-file /dev/null)
 profiles=(--profile postgres-test --profile agent-verify --profile web-verify)
 
 cleanup() {

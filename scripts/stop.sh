@@ -9,4 +9,5 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-docker compose --env-file .env stop postgres agent web
+compose=(docker compose --env-file .env -f "$ROOT_DIR/compose.yaml")
+"${compose[@]}" stop postgres agent web
