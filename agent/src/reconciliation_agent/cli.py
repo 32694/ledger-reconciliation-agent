@@ -10,6 +10,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from reconciliation_agent.domain.seed import seed_demo_data
+from reconciliation_agent.rag.embeddings import EmbeddingService, get_embedding_settings
+from reconciliation_agent.rag.ingest import ingest_rule_directory
 from reconciliation_agent.settings import get_database_settings
 
 
@@ -41,12 +43,32 @@ def _seed() -> None:
         engine.dispose()
 
 
+def _ingest_rules() -> None:
+    database_url = get_database_settings().database_url_for_sqlalchemy
+    rules_directory = Path(__file__).resolve().parents[2] / "knowledge" / "rules"
+    embedding_service = EmbeddingService(get_embedding_settings().embedding_model)
+    engine = create_engine(database_url)
+    try:
+        session = Session(engine)
+        try:
+            ingest_rule_directory(session, rules_directory, embedding_service)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    finally:
+        engine.dispose()
+
+
 def main(argv: Sequence[str] | None = None) -> None:
-    """Run a database migration or seed command."""
+    """Run database and deterministic data initialization commands."""
     parser = argparse.ArgumentParser(prog="reconciliation-agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("migrate").set_defaults(handler=_migrate)
     subparsers.add_parser("seed").set_defaults(handler=_seed)
+    subparsers.add_parser("ingest-rules").set_defaults(handler=_ingest_rules)
     arguments = parser.parse_args(argv)
     arguments.handler()
 

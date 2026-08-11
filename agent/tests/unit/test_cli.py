@@ -136,3 +136,49 @@ def test_seed_disposes_engine_when_session_close_fails(
 
     assert session.committed
     assert engine.disposed
+
+
+@pytest.mark.parametrize("ingest_fails", [False, True])
+def test_ingest_rules_owns_transaction_and_disposes_resources(
+    monkeypatch: pytest.MonkeyPatch, ingest_fails: bool
+) -> None:
+    engine = FakeEngine()
+    session = FakeSession(engine)
+    embedding_service = object()
+    calls = []
+
+    def ingest(fake_session, rules_directory, fake_embedding_service) -> None:
+        calls.append((fake_session, rules_directory.name, fake_embedding_service))
+        if ingest_fails:
+            raise RuntimeError("ingest failed")
+
+    monkeypatch.setattr(
+        cli,
+        "get_database_settings",
+        lambda: SimpleNamespace(database_url_for_sqlalchemy="postgresql://test"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "get_embedding_settings",
+        lambda: SimpleNamespace(embedding_model="demo-embedding"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "EmbeddingService",
+        lambda model_name: embedding_service,
+    )
+    monkeypatch.setattr(cli, "create_engine", lambda url: engine)
+    monkeypatch.setattr(cli, "Session", lambda fake_engine: session)
+    monkeypatch.setattr(cli, "ingest_rule_directory", ingest)
+
+    if ingest_fails:
+        with pytest.raises(RuntimeError, match="ingest failed"):
+            cli.main(["ingest-rules"])
+    else:
+        cli.main(["ingest-rules"])
+
+    assert calls == [(session, "rules", embedding_service)]
+    assert session.committed is not ingest_fails
+    assert session.rolled_back is ingest_fails
+    assert session.closed
+    assert engine.disposed

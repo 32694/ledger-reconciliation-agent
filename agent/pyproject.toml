@@ -24,6 +24,7 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3,<4",
     "sentence-transformers>=5,<6",
     "tenacity>=9,<10",
+    "pyyaml>=6,<7",
 ]
 
 
@@ -40,6 +41,7 @@ packages = [
     "react_agent",
     "reconciliation_agent",
     "reconciliation_agent.domain",
+    "reconciliation_agent.rag",
     "reconciliation_agent.tools",
 ]
 [tool.setuptools.package-dir]
@@ -47,6 +49,7 @@ packages = [
 "react_agent" = "src/react_agent"
 "reconciliation_agent" = "src/reconciliation_agent"
 "reconciliation_agent.domain" = "src/reconciliation_agent/domain"
+"reconciliation_agent.rag" = "src/reconciliation_agent/rag"
 
 
 [tool.setuptools.package-data]
@@ -87,4 +90,5 @@ dev = [
     "httpx>=0.28,<1",
     "langgraph-cli[inmem]>=0.4.10",
     "pytest>=9.0.3",
+    "types-pyyaml>=6,<7",
 ]

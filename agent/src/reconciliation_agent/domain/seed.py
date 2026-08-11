@@ -13,7 +13,6 @@ from reconciliation_agent.domain.models import (
     Payment,
     ReconciliationCase,
     ResultType,
-    RuleChunk,
 )
 
 DEMO_CASES = (
@@ -72,19 +71,6 @@ def _upsert_payment(session: Session, primary_key: int, values: dict[str, Any]) 
         return
     for field, value in values.items():
         setattr(payment, field, value)
-
-
-def _upsert_rule_chunk(
-    session: Session, primary_key: int, values: dict[str, Any]
-) -> None:
-    rule_chunk = session.scalar(
-        select(RuleChunk).where(RuleChunk.chunk_id == values["chunk_id"])
-    )
-    if rule_chunk is None:
-        session.add(RuleChunk(id=primary_key, **values))
-        return
-    for field, value in values.items():
-        setattr(rule_chunk, field, value)
 
 
 def _upsert_ledger_entry(session: Session, values: dict[str, Any]) -> None:
@@ -190,27 +176,6 @@ def seed_demo_data(session: Session) -> None:
                 "result": "OPEN",
                 "business_reference": case_id,
                 "occurred_at": case_time + timedelta(minutes=5),
-            },
-        )
-
-    rule_rows = (
-        (-301, "RULE-ALIPAY-V1", "ALIPAY"),
-        (-302, "RULE-WECHAT-V1", "WECHAT"),
-        (-303, "RULE-UNIONPAY-V1", "UNIONPAY"),
-    )
-    for row_id, rule_version, channel in rule_rows:
-        _upsert_rule_chunk(
-            session,
-            row_id,
-            {
-                "chunk_id": f"{rule_version}-CHUNK-1",
-                "channel": channel,
-                "rule_version": rule_version,
-                "effective_at": _BASE_TIME - timedelta(days=30),
-                "source": "synthetic://reconciliation-rules",
-                "section": "amount-and-presence-checks",
-                "content": f"Synthetic reconciliation rule for {channel}.",
-                "embedding": [0.0] * 512,
             },
         )
 

@@ -61,7 +61,8 @@ ReadOperation = Callable[[ReadRepository, ReconciliationCase], BaseModel]
 
 
 @lru_cache
-def _get_engine() -> Engine:
+def get_tool_engine() -> Engine:
+    """Build the shared lazy SQLAlchemy engine for tool invocations."""
     settings = get_database_settings()
     return create_engine(settings.database_url_for_sqlalchemy)
 
@@ -69,7 +70,7 @@ def _get_engine() -> Engine:
 @contextmanager
 def production_repository_provider() -> Iterator[ReadRepository]:
     """Provide one closed, non-committing repository scope per invocation."""
-    with Session(_get_engine()) as session:
+    with Session(get_tool_engine()) as session:
         yield ReconciliationRepository(session)
 
 
