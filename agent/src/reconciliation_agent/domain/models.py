@@ -1,8 +1,10 @@
 """Database models for reconciliation data."""
 
+from __future__ import annotations
+
 import enum
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -18,6 +20,9 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+if TYPE_CHECKING:
+    from reconciliation_agent.domain.schemas import ResolveCaseCommand
 
 
 class CaseStatus(str, enum.Enum):
@@ -138,6 +143,19 @@ class AuditEvent(Base):
         DateTime(timezone=True), nullable=False
     )
 
+    @classmethod
+    def for_resolution(
+        cls, command: ResolveCaseCommand, occurred_at: datetime
+    ) -> AuditEvent:
+        """Create the audit event emitted for a confirmed resolution."""
+        return cls(
+            actor=command.confirmed_by,
+            action="CASE_RESOLVED",
+            result=command.resolution_code.value,
+            business_reference=command.case_id,
+            occurred_at=occurred_at,
+        )
+
 
 class RuleChunk(Base):
     """Versioned reconciliation rule text and its vector embedding."""
@@ -188,6 +206,20 @@ class CaseResolution(Base):
         DateTime(timezone=True), nullable=False
     )
     agent_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    @classmethod
+    def from_command(
+        cls, command: ResolveCaseCommand, confirmed_at: datetime
+    ) -> CaseResolution:
+        """Create a persisted resolution from a validated command."""
+        return cls(
+            case_id=command.case_id,
+            resolution_code=command.resolution_code,
+            note=command.note,
+            confirmed_by=command.confirmed_by,
+            confirmed_at=confirmed_at,
+            agent_run_id=command.agent_run_id,
+        )
 
 
 class ConfirmationToken(Base):
