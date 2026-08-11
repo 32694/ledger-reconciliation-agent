@@ -1,14 +1,13 @@
 """Fixed synthetic data for local reconciliation demonstrations."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Any, TypeVar
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from reconciliation_agent.domain.models import (
     AuditEvent,
-    Base,
     CaseStatus,
     LedgerEntry,
     Payment,
@@ -24,7 +23,6 @@ DEMO_CASES = (
     ("CASE-1004", "ALIPAY", "AMOUNT_MISMATCH", "RULE-MISSING-V9", 8_000),
 )
 
-_Model = TypeVar("_Model", bound=Base)
 _BASE_TIME = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)
 _TRANSACTION_IDS = {
     "CASE-1001": "ALIPAY-TXN-1001",
@@ -32,19 +30,6 @@ _TRANSACTION_IDS = {
     "CASE-1003": "UNIONPAY-TXN-1003",
     "CASE-1004": "ALIPAY-TXN-1004",
 }
-
-
-def _upsert_by_primary_key(
-    session: Session, model: type[_Model], primary_key: int, values: dict[str, Any]
-) -> _Model:
-    instance = session.get(model, primary_key)
-    if instance is None:
-        instance = model(id=primary_key, **values)
-        session.add(instance)
-        return instance
-    for field, value in values.items():
-        setattr(instance, field, value)
-    return instance
 
 
 def _upsert_case(
@@ -63,7 +48,6 @@ def _upsert_case(
     values = {
         "channel": channel,
         "result_type": ResultType(result_type),
-        "status": CaseStatus.OPEN,
         "rule_version": rule_version,
         "channel_transaction_id": _TRANSACTION_IDS[case_id],
         "channel_amount_cents": channel_amount,
@@ -71,7 +55,9 @@ def _upsert_case(
         "created_at": occurred_at,
     }
     if case is None:
-        session.add(ReconciliationCase(case_id=case_id, **values))
+        session.add(
+            ReconciliationCase(case_id=case_id, status=CaseStatus.OPEN, **values)
+        )
         return
     for field, value in values.items():
         setattr(case, field, value)
@@ -99,6 +85,37 @@ def _upsert_rule_chunk(
         return
     for field, value in values.items():
         setattr(rule_chunk, field, value)
+
+
+def _upsert_ledger_entry(session: Session, values: dict[str, Any]) -> None:
+    ledger_entry = session.scalar(
+        select(LedgerEntry).where(
+            LedgerEntry.business_reference == values["business_reference"],
+            LedgerEntry.account_code == values["account_code"],
+            LedgerEntry.direction == values["direction"],
+            LedgerEntry.posted_at == values["posted_at"],
+        )
+    )
+    if ledger_entry is None:
+        session.add(LedgerEntry(**values))
+        return
+    for field, value in values.items():
+        setattr(ledger_entry, field, value)
+
+
+def _upsert_audit_event(session: Session, values: dict[str, Any]) -> None:
+    audit_event = session.scalar(
+        select(AuditEvent).where(
+            AuditEvent.business_reference == values["business_reference"],
+            AuditEvent.action == values["action"],
+            AuditEvent.occurred_at == values["occurred_at"],
+        )
+    )
+    if audit_event is None:
+        session.add(AuditEvent(**values))
+        return
+    for field, value in values.items():
+        setattr(audit_event, field, value)
 
 
 def seed_demo_data(session: Session) -> None:
@@ -134,18 +151,16 @@ def seed_demo_data(session: Session) -> None:
         )
 
     ledger_rows = (
-        (-1012, "PAY-1001", "ALIPAY_CLEARING", "DEBIT", 9_900, 0),
-        (-1011, "PAY-1001", "CUSTOMER_FUNDS", "CREDIT", 9_900, 1),
-        (-1032, "PAY-1003", "UNIONPAY_CLEARING", "DEBIT", 20_000, 120),
-        (-1031, "PAY-1003", "CUSTOMER_FUNDS", "CREDIT", 20_000, 121),
-        (-1042, "PAY-1004", "ALIPAY_CLEARING", "DEBIT", 7_900, 180),
-        (-1041, "PAY-1004", "CUSTOMER_FUNDS", "CREDIT", 7_900, 181),
+        ("PAY-1001", "ALIPAY_CLEARING", "DEBIT", 9_900, 0),
+        ("PAY-1001", "CUSTOMER_FUNDS", "CREDIT", 9_900, 1),
+        ("PAY-1003", "UNIONPAY_CLEARING", "DEBIT", 20_000, 120),
+        ("PAY-1003", "CUSTOMER_FUNDS", "CREDIT", 20_000, 121),
+        ("PAY-1004", "ALIPAY_CLEARING", "DEBIT", 7_900, 180),
+        ("PAY-1004", "CUSTOMER_FUNDS", "CREDIT", 7_900, 181),
     )
-    for row_id, reference, account, direction, amount_cents, minute in ledger_rows:
-        _upsert_by_primary_key(
+    for reference, account, direction, amount_cents, minute in ledger_rows:
+        _upsert_ledger_entry(
             session,
-            LedgerEntry,
-            row_id,
             {
                 "business_reference": reference,
                 "account_code": account,
@@ -157,10 +172,8 @@ def seed_demo_data(session: Session) -> None:
 
     for offset, (case_id, _, _, _, _) in enumerate(DEMO_CASES):
         case_time = _BASE_TIME + timedelta(hours=offset)
-        _upsert_by_primary_key(
+        _upsert_audit_event(
             session,
-            AuditEvent,
-            -200 - offset * 2,
             {
                 "actor": "synthetic-seed",
                 "action": "EVIDENCE_CAPTURED",
@@ -169,10 +182,8 @@ def seed_demo_data(session: Session) -> None:
                 "occurred_at": case_time - timedelta(minutes=2),
             },
         )
-        _upsert_by_primary_key(
+        _upsert_audit_event(
             session,
-            AuditEvent,
-            -201 - offset * 2,
             {
                 "actor": "reconciliation-engine",
                 "action": "CASE_OPENED",

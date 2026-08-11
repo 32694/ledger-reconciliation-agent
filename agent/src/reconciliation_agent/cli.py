@@ -27,15 +27,17 @@ def _migrate() -> None:
 def _seed() -> None:
     database_url = get_database_settings().database_url_for_sqlalchemy
     engine = create_engine(database_url)
-    session = Session(engine)
     try:
-        seed_demo_data(session)
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
+        session = Session(engine)
+        try:
+            seed_demo_data(session)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
     finally:
-        session.close()
         engine.dispose()
 
 

@@ -31,6 +31,12 @@ class FakeEngine:
         self.disposed = True
 
 
+class CloseFailingSession(FakeSession):
+    def close(self) -> None:
+        self.closed = True
+        raise RuntimeError("close failed")
+
+
 def test_migrate_uses_database_only_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -86,4 +92,47 @@ def test_seed_owns_transaction_and_disposes_resources(
     assert session.committed is not seed_fails
     assert session.rolled_back is seed_fails
     assert session.closed
+    assert engine.disposed
+
+
+def test_seed_disposes_engine_when_session_construction_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = FakeEngine()
+
+    def fail_session(fake_engine: FakeEngine) -> FakeSession:
+        raise RuntimeError("session failed")
+
+    monkeypatch.setattr(
+        cli,
+        "get_database_settings",
+        lambda: SimpleNamespace(database_url_for_sqlalchemy="postgresql://test"),
+    )
+    monkeypatch.setattr(cli, "create_engine", lambda url: engine)
+    monkeypatch.setattr(cli, "Session", fail_session)
+
+    with pytest.raises(RuntimeError, match="session failed"):
+        cli.main(["seed"])
+
+    assert engine.disposed
+
+
+def test_seed_disposes_engine_when_session_close_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = FakeEngine()
+    session = CloseFailingSession(engine)
+    monkeypatch.setattr(
+        cli,
+        "get_database_settings",
+        lambda: SimpleNamespace(database_url_for_sqlalchemy="postgresql://test"),
+    )
+    monkeypatch.setattr(cli, "create_engine", lambda url: engine)
+    monkeypatch.setattr(cli, "Session", lambda fake_engine: session)
+    monkeypatch.setattr(cli, "seed_demo_data", lambda fake_session: None)
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        cli.main(["seed"])
+
+    assert session.committed
     assert engine.disposed

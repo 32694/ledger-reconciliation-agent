@@ -47,6 +47,8 @@ class ReconciliationRepository:
 
     def find_payments(self, case: ReconciliationCase) -> list[Payment]:
         """Return internal payments related to a reconciliation case."""
+        if not case.channel_transaction_id:
+            return []
         statement = (
             select(Payment)
             .where(Payment.channel_transaction_id == case.channel_transaction_id)
@@ -56,6 +58,8 @@ class ReconciliationRepository:
 
     def find_ledger_entries(self, case: ReconciliationCase) -> list[LedgerEntry]:
         """Return ledger entries related to payments for a case."""
+        if not case.channel_transaction_id:
+            return []
         payment_ids = select(Payment.payment_id).where(
             Payment.channel_transaction_id == case.channel_transaction_id
         )
