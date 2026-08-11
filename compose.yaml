@@ -1,0 +1,143 @@
+name: ledger-reconciliation-agent
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-ledger_agent}"
+      POSTGRES_USER: "${POSTGRES_USER:-ledger_agent}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-this-local-password}"
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ledger-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  agent:
+    build:
+      context: ./agent
+      target: runtime
+    environment:
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-ledger_agent}:${POSTGRES_PASSWORD:-change-this-local-password}@postgres:5432/${POSTGRES_DB:-ledger_agent}"
+      MODEL_BASE_URL: "${MODEL_BASE_URL:-}"
+      MODEL_API_KEY: "${MODEL_API_KEY:-}"
+      MODEL_NAME: "${MODEL_NAME:-}"
+      MODEL_TIMEOUT_SECONDS: "${MODEL_TIMEOUT_SECONDS:-30}"
+      MODEL_MAX_OUTPUT_TOKENS: "${MODEL_MAX_OUTPUT_TOKENS:-2048}"
+      MODEL_MAX_RETRIES: "${MODEL_MAX_RETRIES:-2}"
+      MAX_TOOL_CALLS: "${MAX_TOOL_CALLS:-8}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}"
+      LANGSMITH_TRACING: "${LANGSMITH_TRACING:-false}"
+      LANGSMITH_API_KEY: "${LANGSMITH_API_KEY:-}"
+      LANGSMITH_PROJECT: "${LANGSMITH_PROJECT:-ledger-reconciliation-agent}"
+      HF_HOME: /models
+      SENTENCE_TRANSFORMERS_HOME: /models/sentence-transformers
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ledger-huggingface-cache:/models
+      - ./agent/knowledge:/app/knowledge:ro
+    ports:
+      - "127.0.0.1:2024:2024"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:2024/ok', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  web:
+    build:
+      context: ./web
+      target: runner
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:2024
+        NEXT_PUBLIC_ASSISTANT_ID: "${NEXT_PUBLIC_ASSISTANT_ID:-reconciliation_agent}"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:2024
+      NEXT_PUBLIC_ASSISTANT_ID: "${NEXT_PUBLIC_ASSISTANT_ID:-reconciliation_agent}"
+    depends_on:
+      agent:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  postgres-test:
+    image: pgvector/pgvector:pg17
+    profiles: [postgres-test]
+    environment:
+      POSTGRES_DB: ledger_agent_test
+      POSTGRES_USER: ledger_agent_test
+      POSTGRES_PASSWORD: test-only-password
+    volumes:
+      - ledger-postgres-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  agent-verify:
+    build:
+      context: ./agent
+      target: development
+    profiles: [agent-verify]
+    environment:
+      DATABASE_URL: postgresql+psycopg://ledger_agent_test:test-only-password@postgres-test:5432/ledger_agent_test
+      TEST_DATABASE_URL: postgresql+psycopg://ledger_agent_test:test-only-password@postgres-test:5432/ledger_agent_test
+      MODEL_BASE_URL: http://dummy-model.invalid
+      MODEL_API_KEY: dummy-verification-key
+      MODEL_NAME: scripted-dummy
+      MODEL_TIMEOUT_SECONDS: "1"
+      MODEL_MAX_OUTPUT_TOKENS: "2048"
+      MODEL_MAX_RETRIES: "0"
+      MAX_TOOL_CALLS: "8"
+      EMBEDDING_MODEL: BAAI/bge-small-zh-v1.5
+      HF_HOME: /models
+      SENTENCE_TRANSFORMERS_HOME: /models/sentence-transformers
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    volumes:
+      - ledger-huggingface-test-cache:/models
+      - ./artifacts:/workspace/artifacts
+    command: ["sh", "-c", "touch /tmp/agent-verify-ready && exec sleep infinity"]
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent-verify-ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  web-verify:
+    build:
+      context: ./web
+      target: test
+      args:
+        NEXT_PUBLIC_API_URL: http://agent-verify:2024
+        NEXT_PUBLIC_ASSISTANT_ID: reconciliation_agent
+    profiles: [web-verify]
+    command: ["sh", "-c", "touch /tmp/web-verify-ready && exec sleep infinity"]
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/web-verify-ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  ledger-postgres-data:
+  ledger-postgres-test-data:
+  ledger-huggingface-cache:
+  ledger-huggingface-test-cache:

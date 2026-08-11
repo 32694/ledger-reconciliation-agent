@@ -6,6 +6,8 @@ import stat
 import tomllib
 from pathlib import Path
 
+import yaml
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -439,3 +441,101 @@ def test_frontend_runner_is_a_nonroot_standalone_node_server() -> None:
         "*.pem",
     ):
         assert excluded in dockerignore.splitlines()
+
+
+def _compose_document() -> dict:
+    compose_file = REPOSITORY_ROOT / "compose.yaml"
+    assert compose_file.exists(), "missing compose.yaml"
+    return yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+
+
+def test_compose_defines_long_lived_services_and_local_ports() -> None:
+    document = _compose_document()
+    services = document["services"]
+
+    assert {name for name, service in services.items() if not service.get("profiles")} == {
+        "postgres",
+        "agent",
+        "web",
+    }
+
+    assert services["postgres"]["image"].startswith("pgvector/pgvector:")
+    assert "pg17" in services["postgres"]["image"]
+    assert services["postgres"]["ports"] == ["127.0.0.1:5433:5432"]
+    assert services["agent"]["ports"] == ["127.0.0.1:2024:2024"]
+    assert services["web"]["ports"] == ["127.0.0.1:3000:3000"]
+    assert services["postgres"]["healthcheck"]
+    assert services["agent"]["healthcheck"]
+    assert services["web"]["healthcheck"]
+
+
+def test_compose_long_lived_agent_and_web_use_runtime_targets_and_dependencies() -> None:
+    services = _compose_document()["services"]
+    agent = services["agent"]
+    web = services["web"]
+
+    assert agent["build"]["target"] == "runtime"
+    assert agent["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert agent["environment"]["HF_HOME"] == "/models"
+    assert "DATABASE_URL" in agent["environment"]
+    assert "postgres:5432" in agent["environment"]["DATABASE_URL"]
+    assert agent["volumes"]
+
+    assert web["build"]["target"] == "runner"
+    assert web["depends_on"]["agent"]["condition"] == "service_healthy"
+    assert web["build"]["args"]["NEXT_PUBLIC_API_URL"] == "http://localhost:2024"
+    assert "NEXT_PUBLIC_ASSISTANT_ID" in web["build"]["args"]
+
+
+def test_compose_verification_profiles_are_isolated_and_keyless() -> None:
+    services = _compose_document()["services"]
+    for name in ("postgres-test", "agent-verify", "web-verify"):
+        assert services[name]["profiles"]
+        assert "ports" not in services[name]
+
+    assert services["postgres-test"]["profiles"] == ["postgres-test"]
+    assert services["agent-verify"]["profiles"] == ["agent-verify"]
+    assert services["web-verify"]["profiles"] == ["web-verify"]
+    assert services["agent-verify"]["build"]["target"] == "development"
+    assert services["web-verify"]["build"]["target"] == "test"
+    assert services["agent-verify"]["environment"]["MODEL_API_KEY"]
+    assert "dummy" in services["agent-verify"]["environment"]["MODEL_API_KEY"].lower()
+    assert "TEST_DATABASE_URL" in services["agent-verify"]["environment"]
+
+
+def test_compose_uses_named_database_and_huggingface_volumes() -> None:
+    document = _compose_document()
+    services = document["services"]
+    volumes = document["volumes"]
+
+    assert "ledger-postgres-data" in volumes
+    assert "ledger-postgres-test-data" in volumes
+    assert any("ledger-postgres-data" in str(mount) for mount in services["postgres"]["volumes"])
+    assert any("ledger-postgres-test-data" in str(mount) for mount in services["postgres-test"]["volumes"])
+    assert "ledger-huggingface-cache" in volumes
+    assert any("ledger-huggingface-cache" in str(mount) for mount in services["agent"]["volumes"])
+
+
+def test_delivery_scripts_are_executable_and_preserve_data() -> None:
+    scripts_root = REPOSITORY_ROOT / "scripts"
+    for filename in ("start.sh", "stop.sh", "verify.sh"):
+        script = scripts_root / filename
+        assert script.is_file(), f"missing scripts/{filename}"
+        assert os.access(script, os.X_OK), f"scripts/{filename} must be executable"
+
+    start = (scripts_root / "start.sh").read_text(encoding="utf-8")
+    stop = (scripts_root / "stop.sh").read_text(encoding="utf-8")
+    verify = (scripts_root / "verify.sh").read_text(encoding="utf-8")
+    assert "set -euo pipefail" in start
+    assert "docker compose --env-file .env" in start
+    assert "docker compose --env-file .env stop" in stop
+    assert "down -v" not in start + stop
+    assert "--env-file /dev/null" in verify
+    assert "reconciliation_agent.evaluation" in verify
+    assert "/workspace/artifacts/evaluation.json" in verify
+    assert "MODEL_API_KEY" not in verify
+
+
+def test_delivery_artifacts_are_ignored() -> None:
+    gitignore = (REPOSITORY_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "artifacts/" in gitignore
