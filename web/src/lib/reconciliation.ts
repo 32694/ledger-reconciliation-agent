@@ -79,14 +79,49 @@ export function parseEvidenceArtifact(value: unknown): EvidenceArtifact {
   return evidenceArtifactSchema.parse(value);
 }
 
-export function publicNoticeFromState(
-  value: unknown,
-): { tone: "error" | "success" | "warning"; summary: string } | null {
+export function shouldUseResolutionConfirmation(
+  actionName: string | undefined,
+  allowedDecisions: readonly string[],
+  actionCount: number,
+): boolean {
+  return (
+    actionCount === 1 &&
+    actionName === "resolve_case" &&
+    allowedDecisions.includes("approve") &&
+    allowedDecisions.includes("reject")
+  );
+}
+
+export function publicNoticeFromState(value: unknown): {
+  tone: "error" | "success" | "warning";
+  summary: string;
+  detail?: string;
+} | null {
   const state = graphStateSchema.safeParse(value);
   if (!state.success || !state.data.final_response) return null;
 
   const response = state.data.final_response;
   if (response.status === "READY") return null;
+
+  if (response.status === "REJECTED") {
+    return {
+      tone: "warning",
+      summary: "已取消，本次未修改案件",
+      detail: "案件状态：待处理",
+    };
+  }
+
+  if (response.status === "RESOLVED") {
+    const resolution = asRecord(response.resolution);
+    const auditEventId = resolution.audit_event_id;
+    return {
+      tone: "success",
+      summary: "案件已解决",
+      ...(typeof auditEventId === "number"
+        ? { detail: `审计事件编号：${auditEventId}` }
+        : {}),
+    };
+  }
 
   const responseError = asRecord(response.error);
   const summary =
@@ -137,7 +172,10 @@ export function evidenceArtifactFromState(
     },
     {
       label: "案件状态",
-      value: displayEnum(caseFacts.status, caseStatusCopy),
+      value: displayEnum(
+        response.status === "RESOLVED" ? "RESOLVED" : caseFacts.status,
+        caseStatusCopy,
+      ),
     },
     {
       label: "渠道金额",

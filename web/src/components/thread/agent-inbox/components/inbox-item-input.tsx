@@ -7,6 +7,7 @@ import { Undo2 } from "lucide-react";
 import { MarkdownText } from "../../markdown-text";
 import { haveArgsChanged, prettifyText } from "../utils";
 import { toast } from "sonner";
+import { ResolutionConfirmation } from "@/components/cases/resolution-confirmation";
 
 function ResetButton({ handleReset }: { handleReset: () => void }) {
   return (
@@ -57,6 +58,7 @@ interface InboxItemInputProps {
   hasAddedResponse: boolean;
   initialValues: Record<string, string>;
   isLoading: boolean;
+  showResolutionConfirmation: boolean;
   selectedSubmitType: SubmitType | undefined;
 
   setHumanResponse: React.Dispatch<React.SetStateAction<DecisionWithEdits[]>>;
@@ -69,6 +71,7 @@ interface InboxItemInputProps {
   handleSubmit: (
     e: React.MouseEvent<HTMLButtonElement, MouseEvent> | React.KeyboardEvent,
   ) => Promise<void> | void;
+  handleResolutionDecision: (decision: "approve" | "reject") => Promise<void>;
 }
 
 function ApproveOnly({
@@ -317,6 +320,7 @@ export function InboxItemInput({
   hasAddedResponse,
   initialValues,
   isLoading,
+  showResolutionConfirmation,
   supportsMultipleMethods,
   selectedSubmitType,
   setHumanResponse,
@@ -324,6 +328,7 @@ export function InboxItemInput({
   setHasAddedResponse,
   setHasEdited,
   handleSubmit,
+  handleResolutionDecision,
 }: InboxItemInputProps) {
   const allowedDecisions =
     interruptValue.review_configs?.[0]?.allowed_decisions ?? [];
@@ -336,6 +341,16 @@ export function InboxItemInput({
     hasArgs && !isEditAllowed && !approveAllowed && isRejectAllowed;
   const showArgsOutsideCards =
     hasArgs && !showArgsInReject && !isEditAllowed && !approveAllowed;
+
+  if (showResolutionConfirmation) {
+    return (
+      <ResolutionConfirmation
+        args={actionArgs}
+        isLoading={isLoading}
+        onDecision={handleResolutionDecision}
+      />
+    );
+  }
 
   const onEditChange = (
     change: string | string[],

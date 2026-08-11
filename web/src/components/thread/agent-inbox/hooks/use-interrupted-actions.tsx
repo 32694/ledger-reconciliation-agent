@@ -25,6 +25,7 @@ interface UseInterruptedActionsValue {
   handleResolve: (
     e: React.MouseEvent<HTMLButtonElement, MouseEvent>,
   ) => Promise<void>;
+  handleResolutionDecision: (decision: "approve" | "reject") => Promise<void>;
   streaming: boolean;
   streamFinished: boolean;
   loading: boolean;
@@ -84,9 +85,9 @@ export default function useInterruptedActions({
     }
   }, [interrupt]);
 
-  const resumeRun = (decisions: Decision[]): boolean => {
+  const resumeRun = async (decisions: Decision[]): Promise<boolean> => {
     try {
-      thread.submit(
+      await thread.submit(
         {},
         {
           command: {
@@ -100,6 +101,51 @@ export default function useInterruptedActions({
     } catch (error) {
       console.error("Error sending human response", error);
       return false;
+    }
+  };
+
+  const submitDecision = async (
+    decision: Decision,
+    successDescription: string,
+  ) => {
+    let errorOccurred = false;
+    initialHumanInterruptEditValue.current = {};
+
+    try {
+      setLoading(true);
+      setStreaming(true);
+
+      if (!(await resumeRun([decision]))) {
+        errorOccurred = true;
+        toast.error("提交失败", {
+          description: "本次确认未提交，请稍后重试。",
+          richColors: true,
+          closeButton: true,
+          duration: 5000,
+        });
+        return;
+      }
+
+      toast("已提交", {
+        description: successDescription,
+        duration: 5000,
+      });
+      setStreamFinished(true);
+    } catch (error) {
+      console.error("Error sending human response", error);
+      errorOccurred = true;
+      toast.error("提交失败", {
+        description: "本次确认未提交，请稍后重试。",
+        richColors: true,
+        closeButton: true,
+        duration: 5000,
+      });
+    } finally {
+      setStreaming(false);
+      setLoading(false);
+      if (errorOccurred) {
+        setStreamFinished(false);
+      }
     }
   };
 
@@ -132,52 +178,16 @@ export default function useInterruptedActions({
       return;
     }
 
-    let errorOccurred = false;
-    initialHumanInterruptEditValue.current = {};
+    await submitDecision(decision, "响应已提交，Agent 将继续执行。");
+  };
 
-    try {
-      setLoading(true);
-      setStreaming(true);
-
-      const resumedSuccessfully = resumeRun([decision]);
-      if (!resumedSuccessfully) {
-        errorOccurred = true;
-        return;
-      }
-
-      toast("Success", {
-        description: "Response submitted successfully.",
-        duration: 5000,
-      });
-
-      setStreamFinished(true);
-    } catch (error: any) {
-      console.error("Error sending human response", error);
-      errorOccurred = true;
-
-      if ("message" in error && error.message.includes("Invalid assistant")) {
-        toast("Error: Invalid assistant ID", {
-          description:
-            "The provided assistant ID was not found in this graph. Please update the assistant ID in the settings and try again.",
-          richColors: true,
-          closeButton: true,
-          duration: 5000,
-        });
-      } else {
-        toast.error("Error", {
-          description: "Failed to submit response.",
-          richColors: true,
-          closeButton: true,
-          duration: 5000,
-        });
-      }
-    } finally {
-      setStreaming(false);
-      setLoading(false);
-      if (errorOccurred) {
-        setStreamFinished(false);
-      }
-    }
+  const handleResolutionDecision = async (decision: "approve" | "reject") => {
+    await submitDecision(
+      { type: decision },
+      decision === "approve"
+        ? "已确认执行案件处理。"
+        : "已拒绝执行，案件不会被修改。",
+    );
   };
 
   const handleResolve = async (
@@ -221,6 +231,7 @@ export default function useInterruptedActions({
 
   return {
     handleSubmit,
+    handleResolutionDecision,
     handleResolve,
     humanResponse,
     selectedSubmitType,

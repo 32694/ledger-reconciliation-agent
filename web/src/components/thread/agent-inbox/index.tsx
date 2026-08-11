@@ -55,6 +55,21 @@ export function ThreadView({ interrupt }: ThreadViewProps) {
   if (!activeInterrupt) {
     return null;
   }
+  const isResolutionInterrupt =
+    interrupts.length === 1 &&
+    activeInterrupt.value?.action_requests?.length === 1 &&
+    activeInterrupt.value.action_requests[0]?.name === "resolve_case";
+
+  if (isResolutionInterrupt) {
+    return (
+      <ThreadActionsView
+        interrupt={activeInterrupt}
+        handleShowSidePanel={handleShowSidePanel}
+        showState={false}
+        showDescription={false}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full w-full flex-col rounded-2xl bg-gray-50 p-8 lg:flex-row">

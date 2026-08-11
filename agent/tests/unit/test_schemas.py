@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from reconciliation_agent.domain.models import ResolutionCode
 from reconciliation_agent.domain.schemas import ResolveCaseCommand
+from reconciliation_agent.tools.resolution import ResolutionResult
 
 
 def test_resolve_case_command_strips_whitespace() -> None:
@@ -18,6 +19,20 @@ def test_resolve_case_command_strips_whitespace() -> None:
     assert command.note == "reviewed"
     assert command.confirmed_by == "operator"
     assert command.agent_run_id == "run-123"
+
+
+def test_resolution_result_exposes_persisted_audit_event_id() -> None:
+    result = ResolutionResult.model_validate(
+        {
+            "case_id": "CASE-1001",
+            "resolution_code": "INTERNAL_CONFIRMED",
+            "confirmed_by": "demo-admin",
+            "agent_run_id": "run-123",
+            "audit_event_id": 42,
+        }
+    )
+
+    assert result.audit_event_id == 42
 
 
 def test_resolve_case_command_rejects_extra_fields() -> None:

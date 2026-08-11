@@ -10,6 +10,7 @@ import { useQueryState } from "nuqs";
 import { constructOpenInStudioURL, buildDecisionFromState } from "../utils";
 import { Decision, HITLRequest, DecisionType, ActionRequest } from "../types";
 import { useStreamContext } from "@/providers/Stream";
+import { shouldUseResolutionConfirmation } from "@/lib/reconciliation";
 
 interface ThreadActionsViewProps {
   interrupt: Interrupt<HITLRequest>;
@@ -135,6 +136,7 @@ export function ThreadActionsView({
     streamFinished,
     loading,
     handleSubmit,
+    handleResolutionDecision,
     handleResolve,
     setSelectedSubmitType,
     setHasAddedResponse,
@@ -292,7 +294,8 @@ export function ThreadActionsView({
   };
 
   const currentTitle = getActionTitle(currentAction);
-  const actionsDisabled = loading || streaming || submittingAll;
+  const actionsDisabled =
+    loading || streaming || submittingAll || stream.isLoading;
   const hasAllDecisions =
     hasMultipleActions && addressedActions.size === actionRequests.length;
 
@@ -307,6 +310,36 @@ export function ThreadActionsView({
     );
   }
   const interruptValue = singleActionInterrupt.value as HITLRequest;
+  const isResolutionConfirmation = shouldUseResolutionConfirmation(
+    currentAction?.name,
+    matchingConfig?.allowed_decisions ?? [],
+    actionRequests.length,
+  );
+
+  if (isResolutionConfirmation) {
+    return (
+      <div className="w-full max-w-2xl">
+        <InboxItemInput
+          approveAllowed={approveAllowed}
+          hasEdited={hasEdited}
+          hasAddedResponse={hasAddedResponse}
+          interruptValue={interruptValue}
+          humanResponse={humanResponse}
+          initialValues={initialHumanInterruptEditValue.current}
+          setHumanResponse={setHumanResponse}
+          supportsMultipleMethods={supportsMultipleMethods}
+          setSelectedSubmitType={setSelectedSubmitType}
+          setHasAddedResponse={setHasAddedResponse}
+          setHasEdited={setHasEdited}
+          handleSubmit={handleSubmit}
+          handleResolutionDecision={handleResolutionDecision}
+          isLoading={actionsDisabled}
+          showResolutionConfirmation
+          selectedSubmitType={selectedSubmitType}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-full w-full max-w-full flex-col gap-9">
@@ -399,7 +432,9 @@ export function ThreadActionsView({
         setHasAddedResponse={setHasAddedResponse}
         setHasEdited={setHasEdited}
         handleSubmit={hasMultipleActions ? handleSaveDecision : handleSubmit}
+        handleResolutionDecision={handleResolutionDecision}
         isLoading={hasMultipleActions ? submittingAll : loading}
+        showResolutionConfirmation={false}
         selectedSubmitType={selectedSubmitType}
       />
 

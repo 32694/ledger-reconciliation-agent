@@ -1,5 +1,6 @@
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from reconciliation_agent.domain.models import (
+    AuditEvent,
     CaseResolution,
     CaseStatus,
     ConfirmationToken,
@@ -87,7 +89,10 @@ async def test_reject_keeps_case_open(session: Session) -> None:
     )
 
     assert interrupted["__interrupt__"]
-    assert ReconciliationRepository(session).get_case("CASE-1001").status is CaseStatus.OPEN
+    assert (
+        ReconciliationRepository(session).get_case("CASE-1001").status
+        is CaseStatus.OPEN
+    )
     assert session.scalar(select(func.count()).select_from(CaseResolution)) == 0
     assert result["final_response"]["status"] == "REJECTED"
     assert AgentRunRepository(session).get(result["run_id"]).status == "REJECTED"
@@ -100,6 +105,16 @@ async def test_approve_resumes_with_fresh_postgres_graph_and_resolves_once(
 ) -> None:
     session = checkpoint_session
     seed_demo_data(session)
+    session.add(
+        AuditEvent(
+            actor="system",
+            action="FOLLOW_UP_SCHEDULED",
+            result="RECORDED",
+            business_reference="CASE-1001",
+            occurred_at=datetime(2030, 1, 1, tzinfo=UTC),
+        )
+    )
+    session.flush()
     thread_id = f"THREAD-APPROVE-{uuid4()}"
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     provider = _action_provider(session)
@@ -143,9 +158,23 @@ async def test_approve_resumes_with_fresh_postgres_graph_and_resolves_once(
         )
 
     session.expire_all()
-    assert ReconciliationRepository(session).get_case("CASE-1001").status is CaseStatus.RESOLVED
+    assert (
+        ReconciliationRepository(session).get_case("CASE-1001").status
+        is CaseStatus.RESOLVED
+    )
     assert session.scalar(select(func.count()).select_from(CaseResolution)) == 1
     assert session.scalar(select(func.count()).select_from(ConfirmationToken)) == 1
     assert result["final_response"]["status"] == "RESOLVED"
+    resolved_event = session.scalar(
+        select(AuditEvent).where(
+            AuditEvent.business_reference == "CASE-1001",
+            AuditEvent.action == "CASE_RESOLVED",
+        )
+    )
+    assert resolved_event is not None
+    assert (
+        result["final_response"]["resolution"]["audit_event_id"]
+        == resolved_event.id
+    )
     assert token not in str(result)
     assert AgentRunRepository(session).get(result["run_id"]).status == "COMPLETED"

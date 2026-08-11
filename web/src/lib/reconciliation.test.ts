@@ -4,7 +4,16 @@ import {
   evidenceArtifactFromState,
   parseEvidenceArtifact,
   publicNoticeFromState,
+  shouldUseResolutionConfirmation,
 } from "./reconciliation";
+
+describe("shouldUseResolutionConfirmation", () => {
+  it("keeps resolve_case in the generic flow when an interrupt has multiple actions", () => {
+    expect(
+      shouldUseResolutionConfirmation("resolve_case", ["approve", "reject"], 2),
+    ).toBe(false);
+  });
+});
 
 describe("parseEvidenceArtifact", () => {
   it("accepts a versioned citation", () => {
@@ -93,7 +102,7 @@ describe("parseEvidenceArtifact", () => {
   });
 
   it("keeps validated evidence visible after a rejected resolution", () => {
-    const result = evidenceArtifactFromState({
+    const state = {
       case_id: "CASE-1001",
       citations: [
         {
@@ -109,13 +118,41 @@ describe("parseEvidenceArtifact", () => {
         case_id: "CASE-1001",
         summary: "用户已拒绝处理建议，案件保持未处理状态。",
       },
-    });
+    };
+    const result = evidenceArtifactFromState(state);
 
     expect(result).toMatchObject({
       status: "ANALYSIS_READY",
       summary: "用户已拒绝处理建议，案件保持未处理状态。",
     });
     expect(result?.citations).toHaveLength(1);
+    expect(publicNoticeFromState(state)).toEqual({
+      tone: "warning",
+      summary: "已取消，本次未修改案件",
+      detail: "案件状态：待处理",
+    });
+  });
+
+  it("shows the persisted audit event after approval", () => {
+    expect(
+      publicNoticeFromState({
+        case_id: "CASE-1002",
+        final_response: {
+          status: "RESOLVED",
+          case_id: "CASE-1002",
+          summary: "案件已在人工确认后完成处理。",
+          resolution: {
+            case_id: "CASE-1002",
+            resolution_code: "CHANNEL_CONFIRMED",
+            audit_event_id: 42,
+          },
+        },
+      }),
+    ).toEqual({
+      tone: "success",
+      summary: "案件已解决",
+      detail: "审计事件编号：42",
+    });
   });
 
   it("shows a failed run as insufficient evidence", () => {

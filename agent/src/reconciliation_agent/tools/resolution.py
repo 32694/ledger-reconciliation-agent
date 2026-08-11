@@ -21,12 +21,11 @@ class ResolutionResult(BaseModel):
     resolution_code: str
     confirmed_by: str
     agent_run_id: str | None
+    audit_event_id: int
 
 
 ResolutionActionScope = tuple[ConfirmationService, ReconciliationRepository]
-ResolutionActionProvider = Callable[
-    [], AbstractContextManager[ResolutionActionScope]
-]
+ResolutionActionProvider = Callable[[], AbstractContextManager[ResolutionActionScope]]
 
 
 @contextmanager
@@ -46,7 +45,7 @@ def execute_confirmed_resolution(
     """Consume a bound token and resolve its exact proposal atomically."""
     with provider() as (confirmation_service, repository):
         confirmation_service.consume(confirmation_token, proposal)
-        resolution = repository.resolve_case(
+        resolution, audit_event = repository.resolve_case_with_audit(
             ResolveCaseCommand(
                 case_id=proposal.case_id,
                 resolution_code=proposal.resolution_code,
@@ -55,4 +54,10 @@ def execute_confirmed_resolution(
                 agent_run_id=proposal.run_id,
             )
         )
-        return ResolutionResult.model_validate(resolution)
+        return ResolutionResult(
+            case_id=resolution.case_id,
+            resolution_code=resolution.resolution_code,
+            confirmed_by=resolution.confirmed_by,
+            agent_run_id=resolution.agent_run_id,
+            audit_event_id=audit_event.id,
+        )

@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner";
 
 import { getApiKey } from "@/lib/api-key";
+import { extendWithoutReadingGetters } from "@/lib/stream-context";
 
 import { useThreads } from "./Thread";
 
@@ -113,6 +114,9 @@ function StreamSession({
       sleep().then(() => getThreads().then(setThreads).catch(console.error));
     },
   });
+  const contextValue = extendWithoutReadingGetters(streamValue, {
+    connectionStatus,
+  });
 
   useEffect(() => {
     let active = true;
@@ -134,7 +138,7 @@ function StreamSession({
   }, [apiKey, apiUrl, authScheme]);
 
   return (
-    <StreamContext.Provider value={{ ...streamValue, connectionStatus }}>
+    <StreamContext.Provider value={contextValue}>
       {children}
     </StreamContext.Provider>
   );

@@ -154,9 +154,12 @@ function PublicNotice({
       </span>
       <div className="min-w-0 flex-1">
         <p className="mb-1 text-xs font-medium text-zinc-500">系统结论</p>
-        <p className={cn("rounded-md border px-3 py-2 text-sm", toneClassName)}>
-          {notice.summary}
-        </p>
+        <div
+          className={cn("rounded-md border px-3 py-2 text-sm", toneClassName)}
+        >
+          <p className="font-medium">{notice.summary}</p>
+          {notice.detail && <p className="mt-1 text-xs">{notice.detail}</p>}
+        </div>
       </div>
     </div>
   );

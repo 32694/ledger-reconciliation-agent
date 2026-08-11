@@ -119,6 +119,13 @@ class ReconciliationRepository:
 
     def resolve_case(self, command: ResolveCaseCommand) -> CaseResolution:
         """Resolve an open case and write the corresponding audit event."""
+        resolution, _ = self.resolve_case_with_audit(command)
+        return resolution
+
+    def resolve_case_with_audit(
+        self, command: ResolveCaseCommand
+    ) -> tuple[CaseResolution, AuditEvent]:
+        """Resolve an open case and return its exact audit event."""
         case = self._session.scalar(
             select(ReconciliationCase)
             .where(ReconciliationCase.case_id == command.case_id)
@@ -131,9 +138,8 @@ class ReconciliationRepository:
 
         now = datetime.now(UTC)
         resolution = CaseResolution.from_command(command, confirmed_at=now)
+        audit_event = AuditEvent.for_resolution(command, occurred_at=now)
         case.status = CaseStatus.RESOLVED
-        self._session.add_all(
-            [resolution, AuditEvent.for_resolution(command, occurred_at=now)]
-        )
+        self._session.add_all([resolution, audit_event])
         self._session.flush()
-        return resolution
+        return resolution, audit_event

@@ -54,7 +54,7 @@ from reconciliation_agent.tools.resolution import (
 )
 from reconciliation_agent.tools.rules import search_reconciliation_rules
 
-_CASE_ID_PATTERN = re.compile(r"\bCASE-[0-9]{4}\b")
+_CASE_ID_PATTERN = re.compile(r"(?<![A-Z0-9_])CASE-[0-9]{4}(?![A-Z0-9_])")
 
 
 class ResolutionRecommendation(BaseModel):
