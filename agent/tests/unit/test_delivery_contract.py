@@ -222,6 +222,14 @@ def test_backend_dockerfile_uses_locked_python_runtime_contract() -> None:
     assert "HEALTHCHECK" in contents
 
 
+def test_backend_dockerfile_does_not_depend_on_docker_hub() -> None:
+    dockerfile = REPOSITORY_ROOT / "agent" / "Dockerfile"
+    contents = dockerfile.read_text(encoding="utf-8")
+
+    assert "docker.io/" not in contents
+    assert "docker/dockerfile:" not in contents
+
+
 def test_backend_dockerfile_caches_dependencies_before_copying_project() -> None:
     dockerfile = REPOSITORY_ROOT / "agent" / "Dockerfile"
     instructions = _read_dockerfile_instructions(dockerfile)
