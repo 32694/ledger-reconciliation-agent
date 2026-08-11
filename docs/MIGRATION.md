@@ -39,15 +39,22 @@ test -s backups/pre-migration.dump
 
 将 commit SHA 和 `pre-migration.dump` 通过可信渠道带到新电脑。dump 可能含业务数据；即使本项目默认只有合成数据，也应按敏感数据库备份管理。不要传输旧 `.env`，模型 Key 应在新电脑重新配置。
 
-### 2. 在新电脑 clone 同一代码版本
+### 2. 在新电脑 clone 代码
 
 ```bash
 git clone https://github.com/32694/ledger-reconciliation-agent.git
 cd ledger-reconciliation-agent
-git switch --detach <old-computer-commit-sha>
+git switch main
+git branch --set-upstream-to=origin/main main
 ```
 
-先迁移同一代码版本可以避免数据库 schema 与应用代码同时变化。确认 Docker 和 Git 可用：
+正常迁移保持在跟踪 `origin/main` 的 `main` 分支，以便后续安全执行 fast-forward 更新。需要严格复现旧电脑的 tag 或 commit 时，创建命名分支，不要进入 detached HEAD：
+
+```bash
+git switch -c migration-pinned <tag-or-commit>
+```
+
+固定版本分支不要执行 `git pull`。完成固定版本的恢复和验收后，先切回 `main`，再按“升级前后的备份与恢复”执行更新。确认 Docker 和 Git 可用：
 
 ```bash
 git --version
@@ -100,6 +107,8 @@ docker compose --env-file .env -f compose.yaml ps postgres
 
 ```bash
 ./scripts/backup.sh backups/before-$(git rev-parse --short HEAD).dump
+git switch main
+git branch --set-upstream-to=origin/main main
 git pull --ff-only
 ./scripts/start.sh
 ```

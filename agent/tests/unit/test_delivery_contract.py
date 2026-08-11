@@ -1136,6 +1136,22 @@ def test_user_and_migration_guides_cover_safe_end_to_end_operations() -> None:
         assert required_text in migration_contents
 
 
+def test_migration_guide_keeps_upgrades_on_a_tracking_branch() -> None:
+    migration_guide = REPOSITORY_ROOT / "docs" / "MIGRATION.md"
+    contents = migration_guide.read_text(encoding="utf-8")
+
+    for required_command in (
+        "git switch main",
+        "git branch --set-upstream-to=origin/main main",
+        "git switch -c migration-pinned <tag-or-commit>",
+    ):
+        assert required_command in contents
+
+    assert "git switch --detach" not in contents
+    assert contents.index("git switch main") < contents.index("git pull --ff-only")
+    assert "固定版本分支不要执行 `git pull`" in contents
+
+
 def test_subproject_readmes_are_project_specific_and_credit_upstream() -> None:
     readmes = {
         "agent": REPOSITORY_ROOT / "agent" / "README.md",
