@@ -554,6 +554,94 @@ def test_delivery_artifacts_are_ignored() -> None:
     assert "artifacts/" in gitignore
 
 
+def test_root_ci_runs_the_complete_keyless_verification_contract() -> None:
+    workflow_file = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
+    assert workflow_file.exists(), "missing root CI workflow"
+
+    contents = workflow_file.read_text(encoding="utf-8")
+    workflow = yaml.load(contents, Loader=yaml.BaseLoader)
+    triggers = workflow["on"]
+    assert triggers["push"]["branches"] == ["main"]
+    assert "pull_request" in triggers
+    assert "workflow_dispatch" in triggers
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["concurrency"]["cancel-in-progress"] == "true"
+    assert "github.ref" in workflow["concurrency"]["group"]
+
+    jobs = workflow["jobs"]
+    assert len(jobs) == 1
+    job = next(iter(jobs.values()))
+    assert job["runs-on"] == "ubuntu-latest"
+    steps = job["steps"]
+    assert any(step.get("uses", "").startswith("actions/checkout@") for step in steps)
+    assert [step.get("run") for step in steps if "run" in step] == [
+        "./scripts/verify.sh"
+    ]
+
+    upload = next(
+        step
+        for step in steps
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert "always()" in upload["if"]
+    assert upload["with"]["path"] == "artifacts/evaluation.json"
+    assert upload["with"]["if-no-files-found"] == "ignore"
+
+    for forbidden in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "TAVILY_API_KEY",
+        "MODEL_API_KEY",
+        "secrets.",
+    ):
+        assert forbidden not in contents
+
+    verify = (REPOSITORY_ROOT / "scripts" / "verify.sh").read_text(
+        encoding="utf-8"
+    )
+    for command in (
+        "postgres-test",
+        "python -m reconciliation_agent.cli migrate",
+        "python -m ruff check src tests",
+        "python -m mypy --strict src",
+        "python -m pytest -q",
+        "reconciliation_agent.evaluation",
+        "--mode scripted",
+        "pnpm test",
+        "pnpm typecheck",
+        "pnpm build",
+    ):
+        assert command in verify
+
+
+def test_delivery_automation_is_owned_only_by_the_repository_root() -> None:
+    for obsolete_file in (
+        "agent/.github/workflows/unit-tests.yml",
+        "agent/.github/workflows/integration-tests.yml",
+        "web/.github/workflows/ci.yml",
+        "web/.github/dependabot.yml",
+    ):
+        assert not (REPOSITORY_ROOT / obsolete_file).exists()
+
+
+def test_root_dependabot_covers_all_package_ecosystems() -> None:
+    dependabot_file = REPOSITORY_ROOT / ".github" / "dependabot.yml"
+    assert dependabot_file.exists(), "missing root Dependabot configuration"
+
+    configuration = yaml.safe_load(dependabot_file.read_text(encoding="utf-8"))
+    assert configuration["version"] == 2
+    updates = configuration["updates"]
+    assert {
+        (update["package-ecosystem"], update["directory"])
+        for update in updates
+    } == {
+        ("npm", "/web"),
+        ("pip", "/agent"),
+        ("github-actions", "/"),
+    }
+    assert all(update["schedule"]["interval"] == "weekly" for update in updates)
+
+
 def _copy_delivery_script(script_name: str, temporary_root: Path) -> tuple[Path, Path]:
     repository = temporary_root / "repository"
     scripts = repository / "scripts"
