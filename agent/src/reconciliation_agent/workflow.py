@@ -378,6 +378,14 @@ def finalize(state: AgentState) -> dict[str, Any]:
             "citations": state.get("citations", []),
             "resolution_recommendation": state.get("proposed_resolution"),
         }
+    elif state.get("case_id") is None:
+        response = {
+            "status": "INVALID_REQUEST",
+            "case_id": None,
+            "summary": "请求中缺少有效案件编号，格式应为 CASE-四位数字。",
+            "citations": [],
+            "resolution_recommendation": None,
+        }
     else:
         evidence_status = state.get("evidence_status", EvidenceStatus.UNKNOWN.value)
         error_code = {

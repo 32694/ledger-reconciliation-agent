@@ -219,6 +219,28 @@ async def test_missing_locked_rule_returns_deterministic_refusal(
 
 
 @pytest.mark.anyio
+async def test_malformed_case_id_returns_invalid_request_without_model(
+    session: Session,
+) -> None:
+    model = ScriptedChatModel(responses=[])
+    graph = build_graph(
+        model=model,
+        tools=_build_test_tools(session),
+        checkpointer=InMemorySaver(),
+        run_service_provider=_build_test_run_provider(session),
+    )
+
+    result = await graph.ainvoke(
+        {"messages": [("user", "分析格式错误的 CASE-ABCD")]},
+        config={"configurable": {"thread_id": "THREAD-INVALID-CASE"}},
+    )
+
+    assert model.cursor == 0
+    assert result["final_response"]["status"] == "INVALID_REQUEST"
+    assert result["final_response"]["case_id"] is None
+
+
+@pytest.mark.anyio
 async def test_new_turn_cannot_reuse_previous_turn_evidence(session: Session) -> None:
     seed_demo_data(session)
     first_turn = _analysis_responses("CASE-1001", "RULE-ALIPAY-V1")
