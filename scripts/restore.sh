@@ -11,10 +11,14 @@ usage() {
 assume_yes=false
 case $# in
   1)
+    if [[ "$1" == -* ]]; then
+      usage
+      exit 64
+    fi
     backup_path="$1"
     ;;
   2)
-    if [[ "$1" != "--yes" ]]; then
+    if [[ "$1" != "--yes" || -z "$2" || "$2" == -* ]]; then
       usage
       exit 64
     fi
@@ -50,24 +54,18 @@ if [[ ! -f "$ROOT_DIR/.env" ]]; then
   exit 1
 fi
 
-set -a
-# shellcheck disable=SC1091
-. "$ROOT_DIR/.env"
-set +a
-
-compose=(docker compose --env-file .env -f "$ROOT_DIR/compose.yaml")
+compose=(docker compose --env-file "$ROOT_DIR/.env" -f "$ROOT_DIR/compose.yaml")
 health="$("${compose[@]}" ps --format '{{.Service}} {{.Health}}' postgres 2>/dev/null)" || {
   printf '%s\n' '无法检查 postgres 健康状态。' >&2
   exit 1
 }
-if [[ "$health" != *healthy* ]]; then
+if [[ "$health" != "postgres healthy" ]]; then
   printf 'postgres 未就绪，拒绝恢复：%s\n' "$health" >&2
   exit 1
 fi
 
-if ! "${compose[@]}" exec -T postgres pg_restore \
-  --clean --if-exists --no-owner \
-  --dbname="${POSTGRES_DB:-ledger_agent}" <"$backup_path"; then
+if ! "${compose[@]}" exec -T postgres sh -c \
+  'pg_restore --clean --if-exists --no-owner --dbname="$POSTGRES_DB"' <"$backup_path"; then
   printf '%s\n' '恢复失败，原备份文件保持不变。' >&2
   exit 1
 fi

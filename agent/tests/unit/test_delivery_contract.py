@@ -8,6 +8,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -571,7 +572,7 @@ def _copy_delivery_script(script_name: str, temporary_root: Path) -> tuple[Path,
 
 def _fake_docker_bin(temporary_root: Path, body: str) -> tuple[Path, Path]:
     bin_dir = temporary_root / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(parents=True)
     marker = temporary_root / "docker.args"
     docker = bin_dir / "docker"
     docker.write_text(
@@ -634,6 +635,78 @@ def test_backup_failure_preserves_original_and_partial_dump(tmp_path: Path) -> N
     assert marker.exists()
 
 
+def test_backup_retries_create_distinct_partial_files_and_success_renames_atomically(
+    tmp_path: Path,
+) -> None:
+    repository, script = _copy_delivery_script("backup.sh", tmp_path)
+    output = repository / "backups" / "agent.dump"
+    output.parent.mkdir()
+    output.write_text("original backup", encoding="utf-8")
+    bin_dir, marker = _fake_docker_bin(
+        tmp_path,
+        "printf 'partial backup'\nexit 7\n",
+    )
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "DOCKER_MARKER": str(marker),
+    }
+
+    first = subprocess.run(
+        [str(script), str(output)],
+        cwd=repository,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    second = subprocess.run(
+        [str(script), str(output)],
+        cwd=repository,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert first.returncode != 0
+    assert second.returncode != 0
+    assert output.read_text(encoding="utf-8") == "original backup"
+    partials = [
+        candidate
+        for candidate in output.parent.iterdir()
+        if candidate != output and candidate.is_file()
+    ]
+    assert len(partials) == 2
+    assert all(candidate.read_text(encoding="utf-8") == "partial backup" for candidate in partials)
+
+    success_bin, success_marker = _fake_docker_bin(
+        tmp_path / "success",
+        "printf 'new backup'\n",
+    )
+    success_environment = {
+        **os.environ,
+        "PATH": f"{success_bin}:{os.environ['PATH']}",
+        "DOCKER_MARKER": str(success_marker),
+    }
+    successful = subprocess.run(
+        [str(script), str(output)],
+        cwd=repository,
+        env=success_environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert successful.returncode == 0, successful.stderr
+    assert output.read_text(encoding="utf-8") == "new backup"
+    assert len([
+        candidate
+        for candidate in output.parent.iterdir()
+        if candidate != output and candidate.is_file()
+    ]) == 2
+
+
 def test_restore_missing_argument_returns_usage_exit_code_without_docker(
     tmp_path: Path,
 ) -> None:
@@ -669,6 +742,31 @@ def test_restore_missing_file_returns_not_found_before_docker(tmp_path: Path) ->
     )
 
     assert result.returncode == 66
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (("--yes",), ("--unknown",), ("--yes", "--unknown"), ("--yes", "file", "extra")),
+)
+def test_restore_rejects_invalid_options_before_file_lookup_or_docker(
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+) -> None:
+    repository, script = _copy_delivery_script("restore.sh", tmp_path)
+    bin_dir, marker = _fake_docker_bin(tmp_path, "exit 99\n")
+
+    result = subprocess.run(
+        [str(script), *arguments],
+        cwd=repository,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DOCKER_MARKER": str(marker)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 64
+    assert "用法" in result.stderr
     assert not marker.exists()
 
 
@@ -716,6 +814,75 @@ def test_restore_yes_checks_health_then_preserves_source_backup(tmp_path: Path) 
     calls = marker.read_text(encoding="utf-8")
     assert " ps --format" in calls
     assert "pg_restore --clean --if-exists --no-owner" in calls
+
+
+def test_restore_rejects_unhealthy_status_without_running_pg_restore(tmp_path: Path) -> None:
+    repository, script = _copy_delivery_script("restore.sh", tmp_path)
+    backup = repository / "agent.dump"
+    backup.write_bytes(b"custom-format-backup")
+    restore_marker = tmp_path / "pg-restore-called"
+    bin_dir, marker = _fake_docker_bin(
+        tmp_path,
+        "if [[ \"$*\" == *\" ps \"* ]]; then printf 'postgres unhealthy\\n'; "
+        "else touch \"${PG_RESTORE_MARKER}\"; fi\n",
+    )
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "DOCKER_MARKER": str(marker),
+        "PG_RESTORE_MARKER": str(restore_marker),
+    }
+
+    result = subprocess.run(
+        [str(script), "--yes", str(backup)],
+        cwd=repository,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert not restore_marker.exists()
+    assert backup.read_bytes() == b"custom-format-backup"
+
+
+def test_restore_failure_preserves_source_and_does_not_export_dotenv_secrets(
+    tmp_path: Path,
+) -> None:
+    repository, script = _copy_delivery_script("restore.sh", tmp_path)
+    (repository / ".env").write_text(
+        "POSTGRES_DB=ledger_agent\nMODEL_API_KEY=dotenv-secret\n",
+        encoding="utf-8",
+    )
+    backup = repository / "agent.dump"
+    backup.write_bytes(b"custom-format-backup")
+    leaked = tmp_path / "leaked-secret"
+    bin_dir, marker = _fake_docker_bin(
+        tmp_path,
+        "if [[ \"$*\" == *\" ps \"* ]]; then printf 'postgres healthy\\n'; "
+        "else printf '%s' \"${MODEL_API_KEY:-}\" > \"${LEAK_MARKER}\"; cat >/dev/null; exit 9; fi\n",
+    )
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "DOCKER_MARKER": str(marker),
+        "LEAK_MARKER": str(leaked),
+    }
+    environment.pop("MODEL_API_KEY", None)
+
+    result = subprocess.run(
+        [str(script), "--yes", str(backup)],
+        cwd=repository,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert backup.read_bytes() == b"custom-format-backup"
+    assert leaked.read_text(encoding="utf-8") == ""
 
 
 def test_backup_and_restore_scripts_forbid_destructive_cleanup() -> None:
