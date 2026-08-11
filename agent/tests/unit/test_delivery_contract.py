@@ -1,5 +1,7 @@
 """Delivery metadata and configuration contract tests."""
 
+import os
+import stat
 import tomllib
 from pathlib import Path
 
@@ -160,3 +162,44 @@ def test_lockfile_tracks_the_runtime_cli_dependency_from_official_pypi() -> None
         "pytest",
         "types-pyyaml",
     }
+
+
+def test_backend_container_delivery_files_exist() -> None:
+    agent_root = REPOSITORY_ROOT / "agent"
+
+    for filename in ("Dockerfile", ".dockerignore", "docker-entrypoint.sh"):
+        assert (agent_root / filename).exists(), f"missing agent/{filename}"
+
+
+def test_backend_dockerfile_uses_locked_python_runtime_contract() -> None:
+    dockerfile = REPOSITORY_ROOT / "agent" / "Dockerfile"
+    contents = dockerfile.read_text(encoding="utf-8")
+
+    assert "python:3.12-slim" in contents
+    assert "ghcr.io/astral-sh/uv" in contents
+    assert "uv sync --frozen" in contents
+    assert "USER app" in contents
+    assert "EXPOSE 2024" in contents
+    assert "HEALTHCHECK" in contents
+
+
+def test_backend_entrypoint_prepares_data_before_starting_the_api() -> None:
+    entrypoint = REPOSITORY_ROOT / "agent" / "docker-entrypoint.sh"
+    contents = entrypoint.read_text(encoding="utf-8")
+    commands = (
+        "python -m reconciliation_agent.cli migrate",
+        "python -m reconciliation_agent.cli seed",
+        "python -m reconciliation_agent.cli ingest-rules",
+        'exec "$@"',
+    )
+
+    positions = [contents.index(command) for command in commands]
+    assert positions == sorted(positions)
+
+
+def test_backend_entrypoint_is_a_regular_executable_file() -> None:
+    entrypoint = REPOSITORY_ROOT / "agent" / "docker-entrypoint.sh"
+    mode = entrypoint.lstat().st_mode
+
+    assert stat.S_ISREG(mode)
+    assert os.access(entrypoint, os.X_OK)
