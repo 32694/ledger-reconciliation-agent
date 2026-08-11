@@ -2,7 +2,9 @@
 
 import json
 import os
+import shutil
 import stat
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -518,7 +520,7 @@ def test_compose_uses_named_database_and_huggingface_volumes() -> None:
 
 def test_delivery_scripts_are_executable_and_preserve_data() -> None:
     scripts_root = REPOSITORY_ROOT / "scripts"
-    for filename in ("start.sh", "stop.sh", "verify.sh"):
+    for filename in ("start.sh", "stop.sh", "verify.sh", "backup.sh", "restore.sh"):
         script = scripts_root / filename
         assert script.is_file(), f"missing scripts/{filename}"
         assert os.access(script, os.X_OK), f"scripts/{filename} must be executable"
@@ -549,3 +551,179 @@ def test_delivery_scripts_are_executable_and_preserve_data() -> None:
 def test_delivery_artifacts_are_ignored() -> None:
     gitignore = (REPOSITORY_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "artifacts/" in gitignore
+
+
+def _copy_delivery_script(script_name: str, temporary_root: Path) -> tuple[Path, Path]:
+    repository = temporary_root / "repository"
+    scripts = repository / "scripts"
+    scripts.mkdir(parents=True)
+    (repository / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    (repository / ".env").write_text(
+        "POSTGRES_DB=ledger_agent\nPOSTGRES_USER=ledger_agent\n",
+        encoding="utf-8",
+    )
+    script = scripts / script_name
+    source = REPOSITORY_ROOT / "scripts" / script_name
+    shutil.copy2(source, script)
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return repository, script
+
+
+def _fake_docker_bin(temporary_root: Path, body: str) -> tuple[Path, Path]:
+    bin_dir = temporary_root / "bin"
+    bin_dir.mkdir()
+    marker = temporary_root / "docker.args"
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"${DOCKER_MARKER}\"\n"
+        + body,
+        encoding="utf-8",
+    )
+    docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
+    return bin_dir, marker
+
+
+def test_backup_rejects_an_existing_directory_before_calling_docker(tmp_path: Path) -> None:
+    repository, script = _copy_delivery_script("backup.sh", tmp_path)
+    output_directory = repository / "backups"
+    output_directory.mkdir()
+    bin_dir, marker = _fake_docker_bin(tmp_path, "exit 99\n")
+
+    result = subprocess.run(
+        [str(script), str(output_directory)],
+        cwd=repository,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DOCKER_MARKER": str(marker)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 64
+    assert "目录" in result.stderr
+    assert not marker.exists()
+
+
+def test_backup_failure_preserves_original_and_partial_dump(tmp_path: Path) -> None:
+    repository, script = _copy_delivery_script("backup.sh", tmp_path)
+    output = repository / "backups" / "agent.dump"
+    output.parent.mkdir()
+    output.write_text("original backup", encoding="utf-8")
+    bin_dir, marker = _fake_docker_bin(
+        tmp_path,
+        "printf 'partial backup'\nexit 7\n",
+    )
+
+    result = subprocess.run(
+        [str(script), str(output)],
+        cwd=repository,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DOCKER_MARKER": str(marker)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert output.read_text(encoding="utf-8") == "original backup"
+    partials = [
+        candidate
+        for candidate in output.parent.iterdir()
+        if candidate != output and candidate.is_file()
+    ]
+    assert any(candidate.read_text(encoding="utf-8") == "partial backup" for candidate in partials)
+    assert marker.exists()
+
+
+def test_restore_missing_argument_returns_usage_exit_code_without_docker(
+    tmp_path: Path,
+) -> None:
+    repository, script = _copy_delivery_script("restore.sh", tmp_path)
+    bin_dir, marker = _fake_docker_bin(tmp_path, "exit 99\n")
+
+    result = subprocess.run(
+        [str(script)],
+        cwd=repository,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DOCKER_MARKER": str(marker)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 64
+    assert "用法" in result.stderr
+    assert not marker.exists()
+
+
+def test_restore_missing_file_returns_not_found_before_docker(tmp_path: Path) -> None:
+    repository, script = _copy_delivery_script("restore.sh", tmp_path)
+    bin_dir, marker = _fake_docker_bin(tmp_path, "exit 99\n")
+    missing = repository / "backups" / "missing.dump"
+
+    result = subprocess.run(
+        [str(script), str(missing)],
+        cwd=repository,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DOCKER_MARKER": str(marker)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 66
+    assert not marker.exists()
+
+
+def test_restore_requires_fixed_confirmation_before_calling_docker(tmp_path: Path) -> None:
+    repository, script = _copy_delivery_script("restore.sh", tmp_path)
+    backup = repository / "agent.dump"
+    backup.write_bytes(b"custom-format-backup")
+    bin_dir, marker = _fake_docker_bin(tmp_path, "exit 99\n")
+
+    result = subprocess.run(
+        [str(script), str(backup)],
+        cwd=repository,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DOCKER_MARKER": str(marker)},
+        input="取消\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "确认恢复" in result.stdout
+    assert not marker.exists()
+
+
+def test_restore_yes_checks_health_then_preserves_source_backup(tmp_path: Path) -> None:
+    repository, script = _copy_delivery_script("restore.sh", tmp_path)
+    backup = repository / "agent.dump"
+    backup.write_bytes(b"custom-format-backup")
+    bin_dir, marker = _fake_docker_bin(
+        tmp_path,
+        "if [[ \"$*\" == *\" ps \"* ]]; then printf 'postgres healthy\\n'; else cat >/dev/null; fi\n",
+    )
+
+    result = subprocess.run(
+        [str(script), "--yes", str(backup)],
+        cwd=repository,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DOCKER_MARKER": str(marker)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert backup.read_bytes() == b"custom-format-backup"
+    calls = marker.read_text(encoding="utf-8")
+    assert " ps --format" in calls
+    assert "pg_restore --clean --if-exists --no-owner" in calls
+
+
+def test_backup_and_restore_scripts_forbid_destructive_cleanup() -> None:
+    scripts_root = REPOSITORY_ROOT / "scripts"
+    contents = "\n".join(
+        (scripts_root / filename).read_text(encoding="utf-8")
+        for filename in ("backup.sh", "restore.sh")
+        if (scripts_root / filename).exists()
+    )
+    assert "docker compose down -v" not in contents
+    assert "rm -rf" not in contents
