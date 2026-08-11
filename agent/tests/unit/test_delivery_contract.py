@@ -174,9 +174,11 @@ def test_backend_container_delivery_files_exist() -> None:
 def test_backend_dockerfile_uses_locked_python_runtime_contract() -> None:
     dockerfile = REPOSITORY_ROOT / "agent" / "Dockerfile"
     contents = dockerfile.read_text(encoding="utf-8")
+    base_image = contents.splitlines()[0]
 
-    assert "python:3.12-slim" in contents
-    assert "ghcr.io/astral-sh/uv" in contents
+    assert base_image.startswith("FROM ghcr.io/astral-sh/uv:python3.12-")
+    assert base_image.endswith("-slim AS base")
+    assert "COPY --from=ghcr.io/astral-sh/uv" not in contents
     assert "uv sync --frozen" in contents
     assert "USER app" in contents
     assert "EXPOSE 2024" in contents
