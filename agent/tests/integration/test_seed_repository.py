@@ -157,6 +157,37 @@ def test_resolve_case_persists_resolution_and_matching_audit(
         repository.resolve_case(command)
 
 
+def test_resolve_missing_case_writes_no_resolution_or_audit(session: Session) -> None:
+    repository = ReconciliationRepository(session)
+    command = ResolveCaseCommand(
+        case_id="CASE-NOT-FOUND",
+        resolution_code=ResolutionCode.OTHER,
+        note="No matching reconciliation case",
+        confirmed_by="operator@example.test",
+        agent_run_id="run-not-found",
+    )
+
+    with pytest.raises(CaseNotFoundError, match=command.case_id):
+        repository.resolve_case(command)
+
+    assert (
+        session.scalar(
+            select(func.count())
+            .select_from(CaseResolution)
+            .where(CaseResolution.case_id == command.case_id)
+        )
+        == 0
+    )
+    assert (
+        session.scalar(
+            select(func.count())
+            .select_from(AuditEvent)
+            .where(AuditEvent.business_reference == command.case_id)
+        )
+        == 0
+    )
+
+
 def test_seed_converges_existing_synthetic_rows_without_duplicates(
     session: Session,
 ) -> None:
