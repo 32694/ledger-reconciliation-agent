@@ -5,6 +5,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import Tool
 
+import reconciliation_agent.workflow as workflow
 from reconciliation_agent.settings import get_settings
 from reconciliation_agent.state import EvidenceStatus
 from reconciliation_agent.workflow import (
@@ -89,3 +90,45 @@ async def test_injected_model_does_not_require_production_settings(
 
     assert result.get("public_error") is None
     assert model.calls == 1
+
+
+@pytest.mark.anyio
+async def test_production_model_keeps_configured_retries_across_graph_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+psycopg://agent:password@localhost/agent"
+    )
+    monkeypatch.setenv("MODEL_BASE_URL", "https://model.example.test/v1")
+    monkeypatch.setenv("MODEL_API_KEY", "model-api-key")
+    monkeypatch.setenv("MODEL_NAME", "ledger-model")
+    monkeypatch.setenv("MODEL_MAX_RETRIES", "7")
+    get_settings.cache_clear()
+    model = ScriptedChatModel()
+    retries: list[int] = []
+    unused_tool = Tool.from_function(
+        name="unused_tool",
+        description="A tool that must not be called by this test.",
+        func=lambda: "unused",
+    )
+
+    async def invoke_with_retry(
+        _model: Any, _messages: list[Any], *, max_retries: int
+    ) -> AIMessage:
+        retries.append(max_retries)
+        return AIMessage(content="No additional evidence is available.")
+
+    monkeypatch.setattr(workflow, "build_chat_model", lambda _settings: model)
+    monkeypatch.setattr(workflow, "invoke_model_with_retry", invoke_with_retry)
+
+    try:
+        graph = workflow.build_graph(
+            tools=[unused_tool],
+            run_service_provider=cast(Any, lambda: nullcontext(InMemoryRunService())),
+        )
+        await graph.ainvoke({"messages": [HumanMessage(content="请分析 CASE-1001")]})
+        await graph.ainvoke({"messages": [HumanMessage(content="请分析 CASE-1002")]})
+    finally:
+        get_settings.cache_clear()
+
+    assert retries == [7, 7]

@@ -92,9 +92,7 @@ def parse_request(state: AgentState) -> dict[str, Any]:
     match = _CASE_ID_PATTERN.search(question.upper())
     case_id = match.group(0) if match else None
     intent: Literal["ANALYZE", "RESOLVE"] = (
-        "RESOLVE"
-        if any(word in question for word in ("解决", "处理", "结案"))
-        else "ANALYZE"
+        "RESOLVE" if any(word in question for word in ("解决", "处理", "结案")) else "ANALYZE"
     )
     return {
         "case_id": case_id,
@@ -104,9 +102,7 @@ def parse_request(state: AgentState) -> dict[str, Any]:
         "collected_facts": {},
         "citations": [],
         "evidence_status": (
-            EvidenceStatus.UNKNOWN.value
-            if case_id
-            else EvidenceStatus.MISSING_CASE.value
+            EvidenceStatus.UNKNOWN.value if case_id else EvidenceStatus.MISSING_CASE.value
         ),
         "budget_exhausted": False,
         "run_persisted": False,
@@ -204,7 +200,9 @@ def _collect_tool_evidence(
     return facts, citations, errors
 
 
-def _has_required_structured_facts(case: dict[str, Any], facts: dict[str, Any]) -> bool:
+def _has_required_structured_facts(
+    case: dict[str, Any], facts: dict[str, Any]
+) -> bool:
     result_type = case.get("result_type")
     payments = facts.get("payments")
     ledger = facts.get("ledger")
@@ -372,9 +370,7 @@ def finalize(state: AgentState) -> dict[str, Any]:
             "citations": state.get("citations", []),
             "resolution_recommendation": state.get("proposed_resolution"),
         }
-    elif state.get("evidence_status") == EvidenceStatus.COMPLETE and isinstance(
-        draft, dict
-    ):
+    elif state.get("evidence_status") == EvidenceStatus.COMPLETE and isinstance(draft, dict):
         response = {
             "status": "READY",
             "case_id": state.get("case_id"),
@@ -425,6 +421,7 @@ def build_graph(
     tool_list = list(tools or [*READ_TOOLS, search_reconciliation_rules])
     tool_node = ToolNode(tool_list)
     resolved_model = model
+    model_max_retries = 2
     action_provider = (
         resolution_action_provider or production_resolution_action_provider
     )
@@ -467,14 +464,12 @@ def build_graph(
         return {"run_id": run_id, "run_persisted": True}
 
     async def collect_case_facts(state: AgentState) -> dict[str, Any]:
-        nonlocal resolved_model
+        nonlocal model_max_retries, resolved_model
         try:
             if resolved_model is None:
                 settings = get_settings()
                 resolved_model = build_chat_model(settings)
                 model_max_retries = settings.model_max_retries
-            else:
-                model_max_retries = 2
             bound_model = resolved_model.bind_tools(tool_list)
             prompt = SYSTEM_PROMPT.format(
                 case_id=state.get("case_id") or "UNKNOWN",
