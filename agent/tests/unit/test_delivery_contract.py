@@ -1039,3 +1039,124 @@ def test_backup_and_restore_pin_postgres_identity_inside_container() -> None:
     assert "pg_dump --format=custom --username=\"$POSTGRES_USER\" --dbname=\"$POSTGRES_DB\"" in backup
     assert "sh -c" in restore
     assert "pg_restore --clean --if-exists --no-owner --username=\"$POSTGRES_USER\" --dbname=\"$POSTGRES_DB\"" in restore
+
+
+def test_root_readme_documents_the_complete_delivery_contract_in_order() -> None:
+    readme = REPOSITORY_ROOT / "README.md"
+
+    assert readme.exists()
+    contents = readme.read_text(encoding="utf-8")
+    assert contents.strip()
+    assert contents.startswith("# 智能对账分析 Agent\n")
+
+    required_sections = (
+        "## 项目定位",
+        "## 核心能力",
+        "## 架构",
+        "## 三分钟演示",
+        "## 技术栈",
+        "## 快速启动",
+        "## 无 Key 验证",
+        "## 目录结构",
+        "## 当前限制",
+        "## 上游来源与许可证",
+    )
+    positions = [contents.index(section) for section in required_sections]
+    assert positions == sorted(positions)
+
+    for required_text in (
+        "https://github.com/32694/ledger-reconciliation-agent/actions/workflows/ci.yml/badge.svg",
+        "LangGraph",
+        "pgvector",
+        "BAAI/bge-small-zh-v1.5",
+        "版本化 RAG",
+        "scripted model",
+        "人工确认",
+        "./scripts/start.sh",
+        "./scripts/verify.sh",
+        "合成数据",
+        "OpenAI 兼容模型",
+        "Java",
+        "真实资金",
+        "langchain-ai/react-agent",
+        "langchain-ai/agent-chat-ui",
+        "THIRD_PARTY_NOTICES.md",
+    ):
+        assert required_text in contents
+
+    assert "docs/images" not in contents
+    assert "截图待补充" not in contents
+    assert "placeholder" not in contents.lower()
+
+
+def test_user_and_migration_guides_cover_safe_end_to_end_operations() -> None:
+    user_guide = REPOSITORY_ROOT / "docs" / "USER_GUIDE.md"
+    migration_guide = REPOSITORY_ROOT / "docs" / "MIGRATION.md"
+
+    for guide in (user_guide, migration_guide):
+        assert guide.exists()
+        assert guide.read_text(encoding="utf-8").strip()
+
+    user_contents = user_guide.read_text(encoding="utf-8")
+    for required_text in (
+        "cp .env.example .env",
+        "MODEL_BASE_URL",
+        "MODEL_API_KEY",
+        "MODEL_NAME",
+        "不要提交",
+        "./scripts/start.sh",
+        "http://localhost:3000",
+        "CASE-0001",
+        "证据面板",
+        "证据引用",
+        "证据不足",
+        "确认执行",
+        "拒绝执行",
+        "./scripts/stop.sh",
+        "常见错误",
+    ):
+        assert required_text in user_contents
+
+    migration_contents = migration_guide.read_text(encoding="utf-8")
+    for required_text in (
+        "git clone",
+        "Docker",
+        "Git",
+        "cp .env.example .env",
+        "./scripts/backup.sh",
+        "./scripts/restore.sh",
+        "ledger-postgres-data",
+        "ledger-huggingface-cache",
+        "Hugging Face",
+        "MODEL_API_KEY",
+        "重新下载",
+        "不要提交",
+        "回滚边界",
+    ):
+        assert required_text in migration_contents
+
+
+def test_subproject_readmes_are_project_specific_and_credit_upstream() -> None:
+    readmes = {
+        "agent": REPOSITORY_ROOT / "agent" / "README.md",
+        "web": REPOSITORY_ROOT / "web" / "README.md",
+    }
+
+    for project, readme in readmes.items():
+        contents = readme.read_text(encoding="utf-8")
+        first_line = contents.splitlines()[0]
+        assert contents.strip()
+        assert first_line.startswith("# ")
+        assert "../README.md" in contents
+        assert "开发命令" in contents
+        assert "目录职责" in contents
+        assert "上游版权" in contents
+        assert first_line not in {
+            "# LangGraph ReAct Agent Template",
+            "# Agent Chat UI",
+        }
+        assert "docs/images" not in contents
+        assert "placeholder" not in contents.lower()
+
+    assert "langchain-ai/react-agent" in readmes["agent"].read_text(encoding="utf-8")
+    assert "langchain-ai/agent-chat-ui" in readmes["web"].read_text(encoding="utf-8")
