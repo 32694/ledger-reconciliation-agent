@@ -21,10 +21,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run the full quality gate
         run: ./scripts/verify.sh
-      - name: Upload scripted evaluation
+      - name: Upload verification artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: scripted-evaluation
-          path: artifacts/evaluation.json
-          if-no-files-found: ignore
+          name: verification-artifacts
+          path: |
+            artifacts/python-verification.log
+            artifacts/frontend-verification.log
+            artifacts/evaluation.json
+          if-no-files-found: error
+          retention-days: 14

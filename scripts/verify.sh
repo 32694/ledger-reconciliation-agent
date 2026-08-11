@@ -4,6 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 mkdir -p artifacts
+PYTHON_LOG="$ROOT_DIR/artifacts/python-verification.log"
+FRONTEND_LOG="$ROOT_DIR/artifacts/frontend-verification.log"
+: > "$PYTHON_LOG"
+: > "$FRONTEND_LOG"
+
+run_logged() {
+  local log_file="$1"
+  shift
+  "$@" 2>&1 | tee -a "$log_file"
+}
 
 compose=(docker compose --project-name ledger-reconciliation-agent-verify -f "$ROOT_DIR/compose.yaml" --env-file /dev/null)
 profiles=(--profile postgres-test --profile agent-verify --profile web-verify)
@@ -13,29 +23,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"${compose[@]}" "${profiles[@]}" build postgres-test agent-verify web-verify
-"${compose[@]}" "${profiles[@]}" up -d postgres-test agent-verify web-verify
+run_logged "$PYTHON_LOG" "${compose[@]}" "${profiles[@]}" build postgres-test agent-verify web-verify
+run_logged "$PYTHON_LOG" "${compose[@]}" "${profiles[@]}" up -d postgres-test agent-verify web-verify
 
 deadline=$((SECONDS + ${VERIFY_TIMEOUT_SECONDS:-180}))
 for service in postgres-test agent-verify web-verify; do
   until [[ "$("${compose[@]}" ps --format '{{.Service}} {{.Health}}' "$service" 2>/dev/null || true)" == *healthy* ]]; do
     if (( SECONDS >= deadline )); then
-      "${compose[@]}" ps
-      printf 'Timed out waiting for %s health\n' "$service" >&2
+      run_logged "$PYTHON_LOG" "${compose[@]}" ps
+      printf 'Timed out waiting for %s health\n' "$service" | tee -a "$PYTHON_LOG" >&2
       exit 1
     fi
     sleep 2
   done
 done
 
-"${compose[@]}" exec -T agent-verify python -m reconciliation_agent.cli migrate
-"${compose[@]}" exec -T agent-verify python -m ruff check src tests
-"${compose[@]}" exec -T agent-verify python -m mypy --strict src
-"${compose[@]}" exec -T agent-verify python -m pytest -q
-"${compose[@]}" exec -T agent-verify python -m reconciliation_agent.evaluation \
+run_logged "$PYTHON_LOG" "${compose[@]}" exec -T agent-verify python -m reconciliation_agent.cli migrate
+run_logged "$PYTHON_LOG" "${compose[@]}" exec -T agent-verify python -m ruff check src tests
+run_logged "$PYTHON_LOG" "${compose[@]}" exec -T agent-verify python -m mypy --strict src
+run_logged "$PYTHON_LOG" "${compose[@]}" exec -T agent-verify python -m pytest -q
+run_logged "$PYTHON_LOG" "${compose[@]}" exec -T agent-verify python -m reconciliation_agent.evaluation \
   --mode scripted --output /workspace/artifacts/evaluation.json
-"${compose[@]}" exec -T web-verify pnpm test
-"${compose[@]}" exec -T web-verify pnpm typecheck
-"${compose[@]}" exec -T web-verify pnpm build
+run_logged "$FRONTEND_LOG" "${compose[@]}" exec -T web-verify pnpm test
+run_logged "$FRONTEND_LOG" "${compose[@]}" exec -T web-verify pnpm typecheck
+run_logged "$FRONTEND_LOG" "${compose[@]}" exec -T web-verify pnpm build
 
 printf '%s\n' 'Verification completed; see artifacts/evaluation.json.'

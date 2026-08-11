@@ -584,8 +584,12 @@ def test_root_ci_runs_the_complete_keyless_verification_contract() -> None:
         if step.get("uses", "").startswith("actions/upload-artifact@")
     )
     assert "always()" in upload["if"]
-    assert upload["with"]["path"] == "artifacts/evaluation.json"
-    assert upload["with"]["if-no-files-found"] == "ignore"
+    assert set(upload["with"]["path"].splitlines()) == {
+        "artifacts/python-verification.log",
+        "artifacts/frontend-verification.log",
+        "artifacts/evaluation.json",
+    }
+    assert upload["with"]["if-no-files-found"] == "error"
 
     for forbidden in (
         "ANTHROPIC_API_KEY",
@@ -599,6 +603,15 @@ def test_root_ci_runs_the_complete_keyless_verification_contract() -> None:
     verify = (REPOSITORY_ROOT / "scripts" / "verify.sh").read_text(
         encoding="utf-8"
     )
+    for log_variable, log_name in (
+        ("PYTHON_LOG", "artifacts/python-verification.log"),
+        ("FRONTEND_LOG", "artifacts/frontend-verification.log"),
+    ):
+        assert log_name in verify
+        assert f': > "${log_variable}"' in verify
+        assert f'run_logged "${log_variable}"' in verify
+    assert 'tee -a "$log_file"' in verify
+
     for command in (
         "postgres-test",
         "python -m reconciliation_agent.cli migrate",
@@ -671,6 +684,39 @@ def _fake_docker_bin(temporary_root: Path, body: str) -> tuple[Path, Path]:
     )
     docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
     return bin_dir, marker
+
+
+def test_verify_logs_early_failures_without_swallowing_the_exit_status(
+    tmp_path: Path,
+) -> None:
+    repository, script = _copy_delivery_script("verify.sh", tmp_path)
+    artifacts = repository / "artifacts"
+    artifacts.mkdir()
+    python_log = artifacts / "python-verification.log"
+    frontend_log = artifacts / "frontend-verification.log"
+    python_log.write_text("stale python log\n", encoding="utf-8")
+    frontend_log.write_text("stale frontend log\n", encoding="utf-8")
+    bin_dir, marker = _fake_docker_bin(
+        tmp_path,
+        "printf 'build failed before tests\\n'\nexit 23\n",
+    )
+
+    result = subprocess.run(
+        [str(script)],
+        cwd=repository,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "DOCKER_MARKER": str(marker),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 23
+    assert python_log.read_text(encoding="utf-8") == "build failed before tests\n"
+    assert frontend_log.read_text(encoding="utf-8") == ""
 
 
 def test_backup_rejects_an_existing_directory_before_calling_docker(tmp_path: Path) -> None:
