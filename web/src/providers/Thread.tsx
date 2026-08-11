@@ -40,9 +40,11 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const envAuthScheme: string | undefined = process.env.NEXT_PUBLIC_AUTH_SCHEME;
 
   const [apiUrl] = useQueryState("apiUrl", {
-    defaultValue: envApiUrl || "",
+    defaultValue: envApiUrl || "http://localhost:2024",
   });
-  const [assistantId] = useQueryState("assistantId");
+  const [assistantId] = useQueryState("assistantId", {
+    defaultValue: envAssistantId || "reconciliation_agent",
+  });
   const [authScheme] = useQueryState("authScheme", {
     defaultValue: envAuthScheme || "",
   });

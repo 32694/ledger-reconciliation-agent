@@ -1,93 +1,95 @@
-import { v4 as uuidv4 } from "uuid";
-import { ReactNode, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
-import { cn } from "@/lib/utils";
-import { useStreamContext } from "@/providers/Stream";
-import { useState, FormEvent } from "react";
-import { Button } from "../ui/button";
-import { Checkpoint, Message } from "@langchain/langgraph-sdk";
-import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
-import { HumanMessage } from "./messages/human";
-import {
-  DO_NOT_RENDER_ID_PREFIX,
-  ensureToolCallsHaveResponses,
-} from "@/lib/ensure-tool-responses";
-import { LangGraphLogoSVG } from "../icons/langgraph";
-import { TooltipIconButton } from "./tooltip-icon-button";
+import type { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import {
   ArrowDown,
+  Bot,
+  History,
   LoaderCircle,
-  PanelRightOpen,
-  PanelRightClose,
+  PanelRight,
+  SendHorizontal,
   SquarePen,
-  XIcon,
-  Plus,
 } from "lucide-react";
-import { useQueryState, parseAsBoolean } from "nuqs";
+import { parseAsBoolean, useQueryState } from "nuqs";
+import {
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
-import ThreadHistory from "./history";
+import { v4 as uuidv4 } from "uuid";
 import { toast } from "sonner";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { Label } from "../ui/label";
-import { Switch } from "../ui/switch";
-import { GitHubSVG } from "../icons/github";
+
+import { CaseShortcuts } from "@/components/cases/case-shortcuts";
+import { EvidencePanel } from "@/components/cases/evidence-panel";
+import { GitHubSVG } from "@/components/icons/github";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "../ui/tooltip";
-import { useFileUpload } from "@/hooks/use-file-upload";
-import { ContentBlocksPreview } from "./ContentBlocksPreview";
+} from "@/components/ui/tooltip";
 import {
-  useArtifactOpen,
-  ArtifactContent,
-  ArtifactTitle,
-  useArtifactContext,
-} from "./artifact";
+  DO_NOT_RENDER_ID_PREFIX,
+  ensureToolCallsHaveResponses,
+} from "@/lib/ensure-tool-responses";
+import {
+  evidenceArtifactFromState,
+  publicNoticeFromState,
+} from "@/lib/reconciliation";
+import { cn } from "@/lib/utils";
+import { useStreamContext } from "@/providers/Stream";
 
-function StickyToBottomContent(props: {
+import ThreadHistory from "./history";
+import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
+import { HumanMessage } from "./messages/human";
+import { TooltipIconButton } from "./tooltip-icon-button";
+
+function StickyToBottomContent({
+  content,
+  footer,
+}: {
   content: ReactNode;
-  footer?: ReactNode;
-  className?: string;
-  contentClassName?: string;
+  footer: ReactNode;
 }) {
-  const context = useStickToBottomContext();
   return (
-    <div
-      ref={context.scrollRef}
-      style={{ width: "100%", height: "100%" }}
-      className={props.className}
+    <StickToBottom.Content
+      scrollClassName="absolute inset-0 overflow-y-auto"
+      className="flex min-h-full flex-col"
     >
-      <div
-        ref={context.contentRef}
-        className={props.contentClassName}
-      >
-        {props.content}
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pt-6 sm:px-6">
+        {content}
       </div>
-
-      {props.footer}
-    </div>
+      {footer}
+    </StickToBottom.Content>
   );
 }
 
-function ScrollToBottom(props: { className?: string }) {
+function ScrollToBottom() {
   const { isAtBottom, scrollToBottom } = useStickToBottomContext();
-
   if (isAtBottom) return null;
+
   return (
-    <Button
+    <TooltipIconButton
+      tooltip="滚动到底部"
       variant="outline"
-      className={props.className}
+      className="absolute bottom-full left-1/2 mb-3 size-9 -translate-x-1/2 rounded-full bg-white shadow-sm"
       onClick={() => scrollToBottom()}
     >
-      <ArrowDown className="h-4 w-4" />
-      <span>Scroll to bottom</span>
-    </Button>
+      <ArrowDown className="size-4" />
+    </TooltipIconButton>
   );
 }
 
-function OpenGitHubRepo() {
+function GitHubAttribution() {
   return (
     <TooltipProvider>
       <Tooltip>
@@ -95,152 +97,157 @@ function OpenGitHubRepo() {
           <a
             href="https://github.com/langchain-ai/agent-chat-ui"
             target="_blank"
-            className="flex items-center justify-center"
+            rel="noreferrer"
+            className="flex size-9 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
           >
             <GitHubSVG
-              width="24"
-              height="24"
+              width="20"
+              height="20"
             />
+            <span className="sr-only">查看前端开源项目</span>
           </a>
         </TooltipTrigger>
-        <TooltipContent side="left">
-          <p>Open GitHub repo</p>
-        </TooltipContent>
+        <TooltipContent>查看前端开源项目</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
 }
 
-export function Thread() {
-  const [artifactContext, setArtifactContext] = useArtifactContext();
-  const [artifactOpen, closeArtifact] = useArtifactOpen();
-
-  const [threadId, _setThreadId] = useQueryState("threadId");
-  const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
-    "chatHistoryOpen",
-    parseAsBoolean.withDefault(false),
+function NavigationPanel({
+  selectedCaseId,
+  onCaseSelect,
+  onThreadClick,
+}: {
+  selectedCaseId?: string | null;
+  onCaseSelect: (caseId: string) => void;
+  onThreadClick?: () => void;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-6 bg-zinc-50 px-3 py-4">
+      <CaseShortcuts
+        selectedCaseId={selectedCaseId}
+        onSelect={onCaseSelect}
+      />
+      <ThreadHistory onThreadClick={onThreadClick} />
+    </div>
   );
+}
+
+function PublicNotice({
+  notice,
+}: {
+  notice: NonNullable<ReturnType<typeof publicNoticeFromState>>;
+}) {
+  const toneClassName = {
+    error: "border-rose-200 bg-rose-50 text-rose-800",
+    success: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    warning: "border-amber-200 bg-amber-50 text-amber-800",
+  }[notice.tone];
+
+  return (
+    <div
+      className="mr-auto flex w-full items-start gap-3"
+      aria-live="polite"
+    >
+      <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+        <Bot className="size-3.5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="mb-1 text-xs font-medium text-zinc-500">系统结论</p>
+        <p className={cn("rounded-md border px-3 py-2 text-sm", toneClassName)}>
+          {notice.summary}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export function Thread() {
+  const [, setThreadId] = useQueryState("threadId");
   const [hideToolCalls, setHideToolCalls] = useQueryState(
     "hideToolCalls",
     parseAsBoolean.withDefault(false),
   );
   const [input, setInput] = useState("");
-  const {
-    contentBlocks,
-    setContentBlocks,
-    handleFileUpload,
-    dropRef,
-    removeBlock,
-    resetBlocks: _resetBlocks,
-    dragOver,
-    handlePaste,
-  } = useFileUpload();
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [mobileEvidenceOpen, setMobileEvidenceOpen] = useState(false);
   const [firstTokenReceived, setFirstTokenReceived] = useState(false);
-  const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 
   const stream = useStreamContext();
   const messages = stream.messages;
   const isLoading = stream.isLoading;
-
   const lastError = useRef<string | undefined>(undefined);
+  const prevMessageLength = useRef(0);
 
-  const setThreadId = (id: string | null) => {
-    _setThreadId(id);
-
-    // close artifact and reset artifact context
-    closeArtifact();
-    setArtifactContext({});
-  };
+  const artifact = evidenceArtifactFromState(stream.values);
+  const publicNotice = publicNoticeFromState(stream.values);
+  const selectedCaseId = stream.values.case_id;
+  const evidenceStatus = stream.values.evidence_status;
 
   useEffect(() => {
     if (!stream.error) {
       lastError.current = undefined;
       return;
     }
-    try {
-      const message = (stream.error as any).message;
-      if (!message || lastError.current === message) {
-        // Message has already been logged. do not modify ref, return early.
-        return;
-      }
-
-      // Message is defined, and it has not been logged yet. Save it, and send the error
-      lastError.current = message;
-      toast.error("An error occurred. Please try again.", {
-        description: (
-          <p>
-            <strong>Error:</strong> <code>{message}</code>
-          </p>
-        ),
-        richColors: true,
-        closeButton: true,
-      });
-    } catch {
-      // no-op
-    }
+    const message = (stream.error as { message?: string }).message;
+    if (!message || lastError.current === message) return;
+    lastError.current = message;
+    toast.error("Agent 运行失败", {
+      description: "本次请求未完成，请检查服务状态后重试。",
+      richColors: true,
+      closeButton: true,
+    });
   }, [stream.error]);
 
-  // TODO: this should be part of the useStream hook
-  const prevMessageLength = useRef(0);
   useEffect(() => {
     if (
       messages.length !== prevMessageLength.current &&
-      messages?.length &&
-      messages[messages.length - 1].type === "ai"
+      messages.at(-1)?.type === "ai"
     ) {
       setFirstTokenReceived(true);
     }
-
     prevMessageLength.current = messages.length;
   }, [messages]);
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if ((input.trim().length === 0 && contentBlocks.length === 0) || isLoading)
-      return;
+  const submitMessage = (content: string) => {
+    if (!content.trim() || isLoading) return;
     setFirstTokenReceived(false);
 
     const newHumanMessage: Message = {
       id: uuidv4(),
       type: "human",
-      content: [
-        ...(input.trim().length > 0 ? [{ type: "text", text: input }] : []),
-        ...contentBlocks,
-      ] as Message["content"],
+      content: content.trim(),
     };
-
     const toolMessages = ensureToolCallsHaveResponses(stream.messages);
 
-    const context =
-      Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
-
     stream.submit(
-      { messages: [...toolMessages, newHumanMessage], context },
+      { messages: [...toolMessages, newHumanMessage] },
       {
         streamMode: ["values"],
         streamSubgraphs: true,
         streamResumable: true,
-        optimisticValues: (prev) => ({
-          ...prev,
-          context,
+        optimisticValues: (previous) => ({
+          ...previous,
           messages: [
-            ...(prev.messages ?? []),
+            ...(previous.messages ?? []),
             ...toolMessages,
             newHumanMessage,
           ],
         }),
       },
     );
-
     setInput("");
-    setContentBlocks([]);
+  };
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    submitMessage(input);
   };
 
   const handleRegenerate = (
     parentCheckpoint: Checkpoint | null | undefined,
   ) => {
-    // Do this so the loading state is correct
-    prevMessageLength.current = prevMessageLength.current - 1;
+    prevMessageLength.current -= 1;
     setFirstTokenReceived(false);
     stream.submit(undefined, {
       checkpoint: parentCheckpoint,
@@ -250,178 +257,145 @@ export function Thread() {
     });
   };
 
-  const chatStarted = !!threadId || !!messages.length;
-  const hasNoAIOrToolMessages = !messages.find(
-    (m) => m.type === "ai" || m.type === "tool",
+  const selectCase = (caseId: string) => {
+    setInput(`分析 ${caseId} 的差异原因`);
+    setMobileNavigationOpen(false);
+  };
+
+  const hasNoAIOrToolMessages = !messages.some(
+    (message) => message.type === "ai" || message.type === "tool",
   );
+  const connectionCopy = {
+    checking: { label: "正在连接", className: "bg-amber-500" },
+    connected: { label: "服务正常", className: "bg-emerald-500" },
+    disconnected: { label: "服务离线", className: "bg-rose-500" },
+  }[stream.connectionStatus];
 
   return (
-    <div className="flex h-screen w-full overflow-hidden">
-      <div className="relative hidden lg:flex">
-        <motion.div
-          className="absolute z-20 h-full overflow-hidden border-r bg-white"
-          style={{ width: 300 }}
-          animate={
-            isLargeScreen
-              ? { x: chatHistoryOpen ? 0 : -300 }
-              : { x: chatHistoryOpen ? 0 : -300 }
-          }
-          initial={{ x: -300 }}
-          transition={
-            isLargeScreen
-              ? { type: "spring", stiffness: 300, damping: 30 }
-              : { duration: 0 }
-          }
-        >
-          <div
-            className="relative h-full"
-            style={{ width: 300 }}
+    <div className="flex h-dvh min-h-[560px] w-full flex-col overflow-hidden bg-zinc-100 text-zinc-950">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-3 sm:px-4">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <TooltipIconButton
+            tooltip="打开案件与会话"
+            className="size-9 lg:hidden"
+            onClick={() => setMobileNavigationOpen(true)}
           >
-            <ThreadHistory />
+            <History className="size-4" />
+          </TooltipIconButton>
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+            <Bot className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-semibold sm:text-base">
+              智能对账分析
+            </h1>
+            <p className="hidden text-[11px] text-zinc-500 sm:block">
+              证据驱动的案件研判工作台
+            </p>
           </div>
-        </motion.div>
-      </div>
+        </div>
 
-      <div
-        className={cn(
-          "grid w-full grid-cols-[1fr_0fr] transition-all duration-500",
-          artifactOpen && "grid-cols-[3fr_2fr]",
-        )}
-      >
-        <motion.div
-          className={cn(
-            "relative flex min-w-0 flex-1 flex-col overflow-hidden",
-            !chatStarted && "grid-rows-[1fr]",
-          )}
-          layout={isLargeScreen}
-          animate={{
-            marginLeft: chatHistoryOpen ? (isLargeScreen ? 300 : 0) : 0,
-            width: chatHistoryOpen
-              ? isLargeScreen
-                ? "calc(100% - 300px)"
-                : "100%"
-              : "100%",
-          }}
-          transition={
-            isLargeScreen
-              ? { type: "spring", stiffness: 300, damping: 30 }
-              : { duration: 0 }
-          }
-        >
-          {!chatStarted && (
-            <div className="absolute top-0 left-0 z-10 flex w-full items-center justify-between gap-3 p-2 pl-4">
-              <div>
-                {(!chatHistoryOpen || !isLargeScreen) && (
-                  <Button
-                    className="hover:bg-gray-100"
-                    variant="ghost"
-                    onClick={() => setChatHistoryOpen((p) => !p)}
-                  >
-                    {chatHistoryOpen ? (
-                      <PanelRightOpen className="size-5" />
-                    ) : (
-                      <PanelRightClose className="size-5" />
-                    )}
-                  </Button>
-                )}
-              </div>
-              <div className="absolute top-2 right-4 flex items-center">
-                <OpenGitHubRepo />
-              </div>
-            </div>
-          )}
-          {chatStarted && (
-            <div className="relative z-10 flex items-center justify-between gap-3 p-2">
-              <div className="relative flex items-center justify-start gap-2">
-                <div className="absolute left-0 z-10">
-                  {(!chatHistoryOpen || !isLargeScreen) && (
-                    <Button
-                      className="hover:bg-gray-100"
-                      variant="ghost"
-                      onClick={() => setChatHistoryOpen((p) => !p)}
-                    >
-                      {chatHistoryOpen ? (
-                        <PanelRightOpen className="size-5" />
-                      ) : (
-                        <PanelRightClose className="size-5" />
-                      )}
-                    </Button>
-                  )}
-                </div>
-                <motion.button
-                  className="flex cursor-pointer items-center gap-2"
-                  onClick={() => setThreadId(null)}
-                  animate={{
-                    marginLeft: !chatHistoryOpen ? 48 : 0,
-                  }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 300,
-                    damping: 30,
-                  }}
-                >
-                  <LangGraphLogoSVG
-                    width={32}
-                    height={32}
-                  />
-                  <span className="text-xl font-semibold tracking-tight">
-                    Agent Chat
-                  </span>
-                </motion.button>
-              </div>
+        <div className="flex items-center gap-1 sm:gap-2">
+          <span className="hidden items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-600 sm:flex">
+            <span
+              className={cn("size-2 rounded-full", connectionCopy.className)}
+            />
+            {connectionCopy.label}
+          </span>
+          <GitHubAttribution />
+          <TooltipIconButton
+            tooltip="新建会话"
+            className="size-9"
+            onClick={() => setThreadId(null)}
+          >
+            <SquarePen className="size-4" />
+          </TooltipIconButton>
+          <TooltipIconButton
+            tooltip="查看证据"
+            className="size-9 lg:hidden"
+            onClick={() => setMobileEvidenceOpen(true)}
+          >
+            <PanelRight className="size-4" />
+          </TooltipIconButton>
+        </div>
+      </header>
 
-              <div className="flex items-center gap-4">
-                <div className="flex items-center">
-                  <OpenGitHubRepo />
-                </div>
-                <TooltipIconButton
-                  size="lg"
-                  className="p-4"
-                  tooltip="New thread"
-                  variant="ghost"
-                  onClick={() => setThreadId(null)}
-                >
-                  <SquarePen className="size-5" />
-                </TooltipIconButton>
-              </div>
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[260px_minmax(0,1fr)_340px]">
+        <aside className="hidden min-h-0 border-r border-zinc-200 lg:block">
+          <NavigationPanel
+            selectedCaseId={selectedCaseId}
+            onCaseSelect={selectCase}
+          />
+        </aside>
 
-              <div className="from-background to-background/0 absolute inset-x-0 top-full h-5 bg-gradient-to-b" />
-            </div>
-          )}
-
-          <StickToBottom className="relative flex-1 overflow-hidden">
-            <StickyToBottomContent
-              className={cn(
-                "absolute inset-0 overflow-y-scroll px-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent",
-                !chatStarted && "mt-[25vh] flex flex-col items-stretch",
-                chatStarted && "grid grid-rows-[1fr_auto]",
+        <main className="flex min-h-0 min-w-0 flex-col bg-white">
+          <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-100 px-4 sm:px-6">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="text-xs font-medium text-zinc-500">
+                当前会话
+              </span>
+              {selectedCaseId && (
+                <code className="truncate rounded bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-600">
+                  {selectedCaseId}
+                </code>
               )}
-              contentClassName="pt-8 pb-16 max-w-3xl mx-auto flex flex-col gap-4 w-full"
+            </div>
+            <span className="flex items-center gap-1.5 text-[11px] text-zinc-400 sm:hidden">
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  connectionCopy.className,
+                )}
+              />
+              {connectionCopy.label}
+            </span>
+          </div>
+
+          <StickToBottom className="relative min-h-0 flex-1 overflow-hidden">
+            <StickyToBottomContent
               content={
-                <>
-                  {messages
-                    .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
-                    .map((message, index) =>
-                      message.type === "human" ? (
-                        <HumanMessage
-                          key={message.id || `${message.type}-${index}`}
-                          message={message}
-                          isLoading={isLoading}
-                        />
-                      ) : (
-                        <AssistantMessage
-                          key={message.id || `${message.type}-${index}`}
-                          message={message}
-                          isLoading={isLoading}
-                          handleRegenerate={handleRegenerate}
-                        />
-                      ),
-                    )}
-                  {/* Special rendering case where there are no AI/tool messages, but there is an interrupt.
-                    We need to render it outside of the messages list, since there are no messages to render */}
+                <div className="flex flex-1 flex-col gap-4 pb-8">
+                  {messages.length === 0 &&
+                  !stream.interrupt &&
+                  !publicNotice ? (
+                    <div className="flex min-h-80 flex-1 flex-col items-center justify-center text-center">
+                      <span className="mb-4 flex size-12 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50">
+                        <Bot className="size-5 text-emerald-700" />
+                      </span>
+                      <h2 className="text-base font-semibold text-zinc-800">
+                        等待分析案件
+                      </h2>
+                      <p className="mt-2 max-w-sm text-sm leading-6 text-zinc-500">
+                        选择演示案件，或直接输入案件编号开始核查。
+                      </p>
+                    </div>
+                  ) : (
+                    messages
+                      .filter(
+                        (message) =>
+                          !message.id?.startsWith(DO_NOT_RENDER_ID_PREFIX),
+                      )
+                      .map((message, index) =>
+                        message.type === "human" ? (
+                          <HumanMessage
+                            key={message.id || `${message.type}-${index}`}
+                            message={message}
+                            isLoading={isLoading}
+                          />
+                        ) : (
+                          <AssistantMessage
+                            key={message.id || `${message.type}-${index}`}
+                            message={message}
+                            isLoading={isLoading}
+                            handleRegenerate={handleRegenerate}
+                          />
+                        ),
+                      )
+                  )}
+                  {publicNotice && <PublicNotice notice={publicNotice} />}
                   {hasNoAIOrToolMessages && !!stream.interrupt && (
                     <AssistantMessage
-                      key="interrupt-msg"
+                      key="interrupt-message"
                       message={undefined}
                       isLoading={isLoading}
                       handleRegenerate={handleRegenerate}
@@ -430,136 +404,117 @@ export function Thread() {
                   {isLoading && !firstTokenReceived && (
                     <AssistantMessageLoading />
                   )}
-                </>
+                </div>
               }
               footer={
-                <div className="sticky bottom-0 flex flex-col items-center gap-8 bg-white">
-                  {!chatStarted && (
-                    <div className="flex items-center gap-3">
-                      <LangGraphLogoSVG className="h-8 flex-shrink-0" />
-                      <h1 className="text-2xl font-semibold tracking-tight">
-                        Agent Chat
-                      </h1>
-                    </div>
-                  )}
-
-                  <ScrollToBottom className="animate-in fade-in-0 zoom-in-95 absolute bottom-full left-1/2 mb-4 -translate-x-1/2" />
-
-                  <div
-                    ref={dropRef}
-                    className={cn(
-                      "bg-muted relative z-10 mx-auto mb-8 w-full max-w-3xl rounded-2xl shadow-xs transition-all",
-                      dragOver
-                        ? "border-primary border-2 border-dotted"
-                        : "border border-solid",
-                    )}
-                  >
+                <div className="sticky bottom-0 border-t border-zinc-100 bg-white/95 px-4 py-3 backdrop-blur sm:px-6 sm:py-4">
+                  <div className="relative mx-auto max-w-3xl">
+                    <ScrollToBottom />
                     <form
                       onSubmit={handleSubmit}
-                      className="mx-auto grid max-w-3xl grid-rows-[1fr_auto] gap-2"
+                      className="rounded-lg border border-zinc-300 bg-white p-2 shadow-sm transition-shadow focus-within:border-zinc-400 focus-within:shadow-md"
                     >
-                      <ContentBlocksPreview
-                        blocks={contentBlocks}
-                        onRemove={removeBlock}
-                      />
                       <textarea
                         value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onPaste={handlePaste}
-                        onKeyDown={(e) => {
+                        onChange={(event) => setInput(event.target.value)}
+                        onKeyDown={(event) => {
                           if (
-                            e.key === "Enter" &&
-                            !e.shiftKey &&
-                            !e.metaKey &&
-                            !e.nativeEvent.isComposing
+                            event.key === "Enter" &&
+                            !event.shiftKey &&
+                            !event.nativeEvent.isComposing
                           ) {
-                            e.preventDefault();
-                            const el = e.target as HTMLElement | undefined;
-                            const form = el?.closest("form");
-                            form?.requestSubmit();
+                            event.preventDefault();
+                            event.currentTarget.form?.requestSubmit();
                           }
                         }}
-                        placeholder="Type your message..."
-                        className="field-sizing-content resize-none border-none bg-transparent p-3.5 pb-0 shadow-none ring-0 outline-none focus:ring-0 focus:outline-none"
+                        placeholder="输入案件编号，例如：分析CASE-1001"
+                        rows={2}
+                        className="max-h-32 min-h-14 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 outline-none placeholder:text-zinc-400"
                       />
-
-                      <div className="flex items-center gap-6 p-2 pt-4">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <Switch
-                              id="render-tool-calls"
-                              checked={hideToolCalls ?? false}
-                              onCheckedChange={setHideToolCalls}
-                            />
-                            <Label
-                              htmlFor="render-tool-calls"
-                              className="text-sm text-gray-600"
-                            >
-                              Hide Tool Calls
-                            </Label>
-                          </div>
-                        </div>
-                        <Label
-                          htmlFor="file-input"
-                          className="flex cursor-pointer items-center gap-2"
-                        >
-                          <Plus className="size-5 text-gray-600" />
-                          <span className="text-sm text-gray-600">
-                            Upload PDF or Image
-                          </span>
-                        </Label>
-                        <input
-                          id="file-input"
-                          type="file"
-                          onChange={handleFileUpload}
-                          multiple
-                          accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
-                          className="hidden"
-                        />
-                        {stream.isLoading ? (
-                          <Button
-                            key="stop"
-                            onClick={() => stream.stop()}
-                            className="ml-auto"
-                          >
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                            Cancel
-                          </Button>
-                        ) : (
-                          <Button
-                            type="submit"
-                            className="ml-auto shadow-md transition-all"
-                            disabled={
-                              isLoading ||
-                              (!input.trim() && contentBlocks.length === 0)
+                      <div className="flex h-9 items-center justify-between gap-3 px-1">
+                        <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-500">
+                          <Switch
+                            aria-label="显示工具过程"
+                            checked={!hideToolCalls}
+                            onCheckedChange={(checked) =>
+                              setHideToolCalls(!checked)
                             }
-                          >
-                            Send
-                          </Button>
-                        )}
+                          />
+                          <span>显示工具过程</span>
+                        </label>
+                        <Button
+                          type="submit"
+                          size="icon"
+                          aria-label="发送"
+                          disabled={!input.trim() || isLoading}
+                          className="size-9 rounded-md bg-emerald-700 text-white hover:bg-emerald-800"
+                        >
+                          {isLoading ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : (
+                            <SendHorizontal className="size-4" />
+                          )}
+                        </Button>
                       </div>
                     </form>
+                    <p className="mt-2 text-center text-[11px] text-zinc-400">
+                      Agent 结论必须引用当前案件的锁定规则版本
+                    </p>
                   </div>
                 </div>
               }
             />
           </StickToBottom>
-        </motion.div>
-        <div className="relative flex flex-col border-l">
-          <div className="absolute inset-0 flex min-w-[30vw] flex-col">
-            <div className="grid grid-cols-[1fr_auto] border-b p-4">
-              <ArtifactTitle className="truncate overflow-hidden" />
-              <button
-                onClick={closeArtifact}
-                className="cursor-pointer"
-              >
-                <XIcon className="size-5" />
-              </button>
-            </div>
-            <ArtifactContent className="relative flex-grow" />
-          </div>
+        </main>
+
+        <div className="hidden min-h-0 border-l border-zinc-200 lg:block">
+          <EvidencePanel
+            artifact={artifact}
+            evidenceStatus={evidenceStatus}
+          />
         </div>
       </div>
+
+      <Sheet
+        open={mobileNavigationOpen}
+        onOpenChange={setMobileNavigationOpen}
+      >
+        <SheetContent
+          side="left"
+          className="w-[88vw] max-w-xs p-0"
+        >
+          <SheetHeader className="sr-only">
+            <SheetTitle>案件与历史会话</SheetTitle>
+          </SheetHeader>
+          <div className="h-full pt-8">
+            <NavigationPanel
+              selectedCaseId={selectedCaseId}
+              onCaseSelect={selectCase}
+              onThreadClick={() => setMobileNavigationOpen(false)}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet
+        open={mobileEvidenceOpen}
+        onOpenChange={setMobileEvidenceOpen}
+      >
+        <SheetContent
+          side="right"
+          className="w-[92vw] max-w-sm p-0"
+        >
+          <SheetHeader className="sr-only">
+            <SheetTitle>案件证据</SheetTitle>
+          </SheetHeader>
+          <div className="h-full pt-8">
+            <EvidencePanel
+              artifact={artifact}
+              evidenceStatus={evidenceStatus}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

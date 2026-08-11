@@ -26,7 +26,7 @@ export function ToolCalls({
           >
             <div className="border-b border-gray-200 bg-gray-50 px-4 py-2">
               <h3 className="font-medium text-gray-900">
-                {tc.name}
+                工具调用：<code>{tc.name}</code>
                 {tc.id && (
                   <code className="ml-2 rounded bg-gray-100 px-2 py-1 text-sm">
                     {tc.id}
@@ -100,13 +100,13 @@ export function ToolResult({ message }: { message: ToolMessage }) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             {message.name ? (
               <h3 className="font-medium text-gray-900">
-                Tool Result:{" "}
+                工具返回：{" "}
                 <code className="rounded bg-gray-100 px-2 py-1">
                   {message.name}
                 </code>
               </h3>
             ) : (
-              <h3 className="font-medium text-gray-900">Tool Result</h3>
+              <h3 className="font-medium text-gray-900">工具返回</h3>
             )}
             {message.tool_call_id && (
               <code className="ml-2 rounded bg-gray-100 px-2 py-1 text-sm">

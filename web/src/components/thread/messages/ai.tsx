@@ -15,6 +15,7 @@ import { ThreadView } from "../agent-inbox";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { GenericInterruptView } from "./generic-interrupt";
 import { useArtifact } from "../artifact";
+import { Bot } from "lucide-react";
 
 function CustomComponent({
   message,
@@ -116,8 +117,7 @@ export function AssistantMessage({
   );
 
   const thread = useStreamContext();
-  const isLastMessage =
-    thread.messages[thread.messages.length - 1].id === message?.id;
+  const isLastMessage = thread.messages.at(-1)?.id === message?.id;
   const hasNoAIOrToolMessages = !thread.messages.find(
     (m) => m.type === "ai" || m.type === "tool",
   );
@@ -147,8 +147,12 @@ export function AssistantMessage({
   }
 
   return (
-    <div className="group mr-auto flex w-full items-start gap-2">
+    <div className="group mr-auto flex w-full items-start gap-3">
+      <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+        <Bot className="size-3.5" />
+      </span>
       <div className="flex w-full flex-col gap-2">
+        <p className="text-xs font-medium text-zinc-500">对账 Agent</p>
         {isToolResult ? (
           <>
             <ToolResult message={message} />
@@ -219,8 +223,11 @@ export function AssistantMessage({
 
 export function AssistantMessageLoading() {
   return (
-    <div className="mr-auto flex items-start gap-2">
-      <div className="bg-muted flex h-8 items-center gap-1 rounded-2xl px-4 py-2">
+    <div className="mr-auto flex items-start gap-3">
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+        <Bot className="size-3.5" />
+      </span>
+      <div className="bg-muted flex h-8 items-center gap-1 rounded-md px-4 py-2">
         <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_infinite] rounded-full"></div>
         <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_0.5s_infinite] rounded-full"></div>
         <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_1s_infinite] rounded-full"></div>

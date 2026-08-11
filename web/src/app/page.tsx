@@ -7,9 +7,15 @@ import { ArtifactProvider } from "@/components/thread/artifact";
 import { Toaster } from "@/components/ui/sonner";
 import React from "react";
 
-export default function DemoPage(): React.ReactNode {
+export default function ReconciliationPage(): React.ReactNode {
   return (
-    <React.Suspense fallback={<div>Loading (layout)...</div>}>
+    <React.Suspense
+      fallback={
+        <div className="flex h-dvh items-center justify-center text-sm text-zinc-500">
+          正在加载对账工作台…
+        </div>
+      }
+    >
       <Toaster />
       <ThreadProvider>
         <StreamProvider>
