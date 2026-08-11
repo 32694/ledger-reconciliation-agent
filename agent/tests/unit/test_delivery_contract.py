@@ -1,5 +1,6 @@
 """Delivery metadata and configuration contract tests."""
 
+import json
 import os
 import stat
 import tomllib
@@ -328,3 +329,106 @@ def test_backend_entrypoint_is_a_regular_executable_file() -> None:
 
     assert stat.S_ISREG(mode)
     assert os.access(entrypoint, os.X_OK)
+
+
+def test_frontend_container_delivery_files_and_metadata_exist() -> None:
+    web_root = REPOSITORY_ROOT / "web"
+
+    for filename in ("Dockerfile", ".dockerignore"):
+        assert (web_root / filename).exists(), f"missing web/{filename}"
+
+    package = json.loads((web_root / "package.json").read_text(encoding="utf-8"))
+    assert package["name"] == "ledger-reconciliation-agent-web"
+    assert package["scripts"]["test"] == "vitest run"
+    assert package["scripts"]["typecheck"] == "tsc --noEmit"
+
+    next_config = (web_root / "next.config.mjs").read_text(encoding="utf-8")
+    assert 'output: "standalone"' in next_config
+
+
+def test_frontend_dockerfile_uses_locked_node_and_pnpm_build_stages() -> None:
+    dockerfile = REPOSITORY_ROOT / "web" / "Dockerfile"
+    instructions = _read_dockerfile_instructions(dockerfile)
+
+    assert instructions[0] == "FROM node:22.14.0-alpine3.21 AS base"
+
+    base = _dockerfile_stage(instructions, "base")
+    assert any("pnpm@10.5.1" in instruction for instruction in base)
+
+    deps = _dockerfile_stage(instructions, "deps")
+    install = next(
+        instruction
+        for instruction in deps
+        if instruction.startswith("RUN ") and "pnpm install" in instruction
+    )
+    assert "--frozen-lockfile" in install
+    assert any(
+        instruction.startswith("COPY ")
+        and "package.json" in instruction
+        and "pnpm-lock.yaml" in instruction
+        for instruction in deps
+    )
+
+    test_stage = _dockerfile_stage(instructions, "test")
+    assert "COPY . ." in test_stage
+    for command in ("pnpm test", "pnpm typecheck", "pnpm build"):
+        assert any(
+            instruction.startswith("RUN ") and command in instruction
+            for instruction in test_stage
+        )
+
+
+def test_frontend_builder_accepts_only_public_runtime_identifiers() -> None:
+    dockerfile = REPOSITORY_ROOT / "web" / "Dockerfile"
+    contents = dockerfile.read_text(encoding="utf-8")
+    instructions = _read_dockerfile_instructions(dockerfile)
+    builder = _dockerfile_stage(instructions, "builder")
+
+    for variable in ("NEXT_PUBLIC_API_URL", "NEXT_PUBLIC_ASSISTANT_ID"):
+        assert f"ARG {variable}" in builder
+        assert any(
+            instruction.startswith("ENV ") and variable in instruction
+            for instruction in builder
+        )
+    assert any(
+        instruction.startswith("RUN ") and "pnpm build" in instruction
+        for instruction in builder
+    )
+
+    uppercase_contents = contents.upper()
+    for forbidden_name in ("API_KEY", "SECRET", "PASSWORD", "TOKEN"):
+        assert forbidden_name not in uppercase_contents
+
+
+def test_frontend_runner_is_a_nonroot_standalone_node_server() -> None:
+    web_root = REPOSITORY_ROOT / "web"
+    dockerfile = web_root / "Dockerfile"
+    instructions = _read_dockerfile_instructions(dockerfile)
+    runner = _dockerfile_stage(instructions, "runner")
+
+    assert any(
+        instruction.startswith("COPY ") and ".next/standalone" in instruction
+        for instruction in runner
+    )
+    assert any(
+        instruction.startswith("COPY ") and ".next/static" in instruction
+        for instruction in runner
+    )
+    assert not any(
+        instruction.startswith("COPY ") and "public" in instruction
+        for instruction in runner
+    )
+    assert "USER nextjs" in runner
+    assert "EXPOSE 3000" in runner
+    assert 'CMD ["node", "server.js"]' in runner
+
+    dockerignore = (web_root / ".dockerignore").read_text(encoding="utf-8")
+    for excluded in (
+        "node_modules",
+        ".next",
+        ".env*",
+        ".npmrc",
+        "*.key",
+        "*.pem",
+    ):
+        assert excluded in dockerignore.splitlines()

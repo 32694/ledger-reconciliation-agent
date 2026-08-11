@@ -1,4 +1,9 @@
 node_modules
 .next
 .git
-.env
+.env*
+.npmrc
+*.key
+*.pem
+npm-debug.log*
+pnpm-debug.log*
