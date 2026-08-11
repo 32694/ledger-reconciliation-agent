@@ -18,6 +18,42 @@ def _read_environment_template(path: Path) -> dict[str, str]:
     return values
 
 
+def _read_dockerfile_instructions(path: Path) -> list[str]:
+    instructions = []
+    fragments: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not fragments and (not line or line.startswith("#")):
+            continue
+        continued = line.endswith("\\")
+        fragment = line[:-1].rstrip() if continued else line
+        if fragment and not fragment.startswith("#"):
+            fragments.append(fragment)
+        if not continued:
+            instructions.append(" ".join(fragments))
+            fragments = []
+
+    assert not fragments, "unterminated Dockerfile instruction"
+    return instructions
+
+
+def _dockerfile_stage(instructions: list[str], name: str) -> list[str]:
+    start = next(
+        index
+        for index, instruction in enumerate(instructions)
+        if instruction.startswith("FROM ") and instruction.endswith(f" AS {name}")
+    )
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(instructions))
+            if instructions[index].startswith("FROM ")
+        ),
+        len(instructions),
+    )
+    return instructions[start + 1 : end]
+
+
 def test_root_environment_template_contains_delivery_configuration() -> None:
     environment_template = REPOSITORY_ROOT / ".env.example"
 
@@ -174,15 +210,94 @@ def test_backend_container_delivery_files_exist() -> None:
 def test_backend_dockerfile_uses_locked_python_runtime_contract() -> None:
     dockerfile = REPOSITORY_ROOT / "agent" / "Dockerfile"
     contents = dockerfile.read_text(encoding="utf-8")
-    base_image = contents.splitlines()[0]
+    instructions = _read_dockerfile_instructions(dockerfile)
 
-    assert base_image.startswith("FROM ghcr.io/astral-sh/uv:python3.12-")
-    assert base_image.endswith("-slim AS base")
+    assert instructions[0] == (
+        "FROM ghcr.io/astral-sh/uv:0.9.26-python3.12-bookworm-slim AS base"
+    )
     assert "COPY --from=ghcr.io/astral-sh/uv" not in contents
     assert "uv sync --frozen" in contents
     assert "USER app" in contents
     assert "EXPOSE 2024" in contents
     assert "HEALTHCHECK" in contents
+
+
+def test_backend_dockerfile_caches_dependencies_before_copying_project() -> None:
+    dockerfile = REPOSITORY_ROOT / "agent" / "Dockerfile"
+    instructions = _read_dockerfile_instructions(dockerfile)
+
+    for stage_name in ("development", "runtime"):
+        stage = _dockerfile_stage(instructions, stage_name)
+        metadata_position = next(
+            (
+                index
+                for index, instruction in enumerate(stage)
+                if instruction.startswith("COPY ")
+                and all(
+                    filename in instruction
+                    for filename in ("pyproject.toml", "uv.lock", "README.md")
+                )
+            ),
+            None,
+        )
+        dependency_sync_positions = [
+            index
+            for index, instruction in enumerate(stage)
+            if instruction.startswith("RUN ")
+            and "uv sync" in instruction
+            and "--frozen" in instruction
+            and "--no-install-project" in instruction
+        ]
+        project_copy_positions = [
+            index
+            for index, instruction in enumerate(stage)
+            if instruction.startswith("COPY ") and index != metadata_position
+        ]
+
+        assert metadata_position is not None
+        assert len(dependency_sync_positions) == 1
+        assert project_copy_positions
+        assert metadata_position < dependency_sync_positions[0]
+        assert all(
+            dependency_sync_positions[0] < position
+            for position in project_copy_positions
+        )
+
+
+def test_backend_dockerfile_uses_ephemeral_cache_for_every_sync() -> None:
+    dockerfile = REPOSITORY_ROOT / "agent" / "Dockerfile"
+    instructions = _read_dockerfile_instructions(dockerfile)
+    syncs = [
+        instruction
+        for instruction in instructions
+        if instruction.startswith("RUN ") and "uv sync" in instruction
+    ]
+
+    assert syncs
+    assert all("--mount=type=cache" in sync for sync in syncs)
+
+
+def test_backend_runtime_installs_only_locked_noneditable_project() -> None:
+    dockerfile = REPOSITORY_ROOT / "agent" / "Dockerfile"
+    instructions = _read_dockerfile_instructions(dockerfile)
+    runtime = _dockerfile_stage(instructions, "runtime")
+    syncs = [
+        instruction
+        for instruction in runtime
+        if instruction.startswith("RUN ") and "uv sync" in instruction
+    ]
+
+    assert len(syncs) == 2
+    assert "--frozen" in syncs[0]
+    assert "--no-dev" in syncs[0]
+    assert "--no-install-project" in syncs[0]
+    assert "--frozen" in syncs[1]
+    assert "--no-dev" in syncs[1]
+    assert "--no-editable" in syncs[1]
+    assert all(
+        "--mount=type=cache,target=/home/app/.cache/uv,uid=10001,gid=10001" in sync
+        for sync in syncs
+    )
 
 
 def test_backend_entrypoint_prepares_data_before_starting_the_api() -> None:

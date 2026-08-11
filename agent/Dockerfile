@@ -1,4 +1,6 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS base
+# syntax=docker/dockerfile:1
+
+FROM ghcr.io/astral-sh/uv:0.9.26-python3.12-bookworm-slim AS base
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
@@ -7,13 +9,17 @@ WORKDIR /app
 FROM base AS development
 
 COPY pyproject.toml uv.lock README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --all-groups --all-extras
+
 COPY src/ src/
 COPY migrations/ migrations/
 COPY knowledge/ knowledge/
 COPY tests/ tests/
 COPY evals/ evals/
 COPY alembic.ini langgraph.json ./
-RUN uv sync --frozen --all-groups --all-extras
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --all-groups --all-extras
 
 FROM base AS runtime
 
@@ -23,14 +29,18 @@ RUN groupadd --gid 10001 app \
     && chown -R app:app /app /home/app/.cache
 
 COPY --chown=app:app pyproject.toml uv.lock README.md ./
+
+USER app
+RUN --mount=type=cache,target=/home/app/.cache/uv,uid=10001,gid=10001 \
+    uv sync --frozen --no-dev --no-install-project
+
 COPY --chown=app:app src/ src/
 COPY --chown=app:app migrations/ migrations/
 COPY --chown=app:app knowledge/ knowledge/
 COPY --chown=app:app alembic.ini langgraph.json ./
 COPY --chown=app:app --chmod=0755 docker-entrypoint.sh ./docker-entrypoint.sh
-
-USER app
-RUN uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/home/app/.cache/uv,uid=10001,gid=10001 \
+    uv sync --frozen --no-dev --no-editable
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
