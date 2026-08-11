@@ -36,12 +36,14 @@ packages = [
     "reconciliation_agent",
     "reconciliation_agent.domain",
     "reconciliation_agent.rag",
+    "reconciliation_agent.safety",
     "reconciliation_agent.tools",
 ]
 [tool.setuptools.package-dir]
 "reconciliation_agent" = "src/reconciliation_agent"
 "reconciliation_agent.domain" = "src/reconciliation_agent/domain"
 "reconciliation_agent.rag" = "src/reconciliation_agent/rag"
+"reconciliation_agent.safety" = "src/reconciliation_agent/safety"
 "reconciliation_agent.tools" = "src/reconciliation_agent/tools"
 
 

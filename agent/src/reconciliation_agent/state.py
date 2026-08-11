@@ -51,5 +51,7 @@ class AgentState(InputState, total=False):
     draft_analysis: NotRequired[dict[str, Any] | None]
     proposed_resolution: NotRequired[dict[str, Any] | None]
     confirmation_request: NotRequired[dict[str, Any] | None]
+    confirmation_decision: NotRequired[dict[str, Any] | None]
+    resolution_result: NotRequired[dict[str, Any] | None]
     final_response: dict[str, Any]
     budget_exhausted: bool

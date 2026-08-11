@@ -21,10 +21,12 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.types import interrupt
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from reconciliation_agent.context import AgentContext
 from reconciliation_agent.domain.models import ResolutionCode, ResultType
+from reconciliation_agent.domain.schemas import ResolutionProposal
 from reconciliation_agent.model import build_chat_model, invoke_model_with_retry
 from reconciliation_agent.prompts import SYSTEM_PROMPT
 from reconciliation_agent.settings import get_settings
@@ -35,6 +37,11 @@ from reconciliation_agent.state import (
     InputState,
 )
 from reconciliation_agent.tools import READ_TOOLS
+from reconciliation_agent.tools.resolution import (
+    ResolutionActionProvider,
+    execute_confirmed_resolution,
+    production_resolution_action_provider,
+)
 from reconciliation_agent.tools.rules import search_reconciliation_rules
 
 _CASE_ID_PATTERN = re.compile(r"\bCASE-[0-9]{4}\b")
@@ -254,10 +261,69 @@ def refuse_analysis(state: AgentState) -> dict[str, Any]:
     return {"draft_analysis": None, "proposed_resolution": None}
 
 
+def _route_after_draft(
+    state: AgentState,
+) -> Literal["prepare_confirmation", "finalize"]:
+    if (
+        state.get("evidence_status") == EvidenceStatus.COMPLETE
+        and state.get("intent") == "RESOLVE"
+        and state.get("proposed_resolution")
+    ):
+        return "prepare_confirmation"
+    return "finalize"
+
+
+def _thread_id(config: RunnableConfig) -> str:
+    thread_id = config.get("configurable", {}).get("thread_id")
+    if not isinstance(thread_id, str) or not thread_id:
+        raise ValueError("thread_id is required for confirmation")
+    return thread_id
+
+
+def _confirmation_decision(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("confirmation decision must be an object")
+    decisions = value.get("decisions")
+    if not isinstance(decisions, list) or len(decisions) != 1:
+        raise ValueError("exactly one confirmation decision is required")
+    decision = decisions[0]
+    if not isinstance(decision, dict) or decision.get("type") not in {
+        "approve",
+        "reject",
+    }:
+        raise ValueError("confirmation decision must approve or reject")
+    return decision
+
+
+def _route_after_confirmation(
+    state: AgentState,
+) -> Literal["execute_resolution", "finalize"]:
+    decision = state.get("confirmation_decision") or {}
+    return "execute_resolution" if decision.get("type") == "approve" else "finalize"
+
+
 def finalize(state: AgentState) -> dict[str, Any]:
     """Build the stable public response from validated state only."""
     draft = state.get("draft_analysis")
-    if state.get("evidence_status") == EvidenceStatus.COMPLETE and isinstance(draft, dict):
+    resolution_result = state.get("resolution_result")
+    decision = state.get("confirmation_decision") or {}
+    if isinstance(resolution_result, dict):
+        response = {
+            "status": "RESOLVED",
+            "case_id": state.get("case_id"),
+            "summary": "案件已在人工确认后完成处理。",
+            "resolution": resolution_result,
+            "citations": state.get("citations", []),
+        }
+    elif decision.get("type") == "reject":
+        response = {
+            "status": "REJECTED",
+            "case_id": state.get("case_id"),
+            "summary": "用户已拒绝案件处理建议，案件保持未处理状态。",
+            "citations": state.get("citations", []),
+            "resolution_recommendation": state.get("proposed_resolution"),
+        }
+    elif state.get("evidence_status") == EvidenceStatus.COMPLETE and isinstance(draft, dict):
         response = {
             "status": "READY",
             "case_id": state.get("case_id"),
@@ -275,7 +341,7 @@ def finalize(state: AgentState) -> dict[str, Any]:
             "citations": [],
             "resolution_recommendation": None,
         }
-    return {"final_response": response}
+    return {"final_response": response, "confirmation_request": None}
 
 
 def build_graph(
@@ -284,11 +350,16 @@ def build_graph(
     tools: Sequence[BaseTool] | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     max_tool_calls: int = 8,
+    resolution_action_provider: ResolutionActionProvider | None = None,
+    confirmed_by: str = "demo-admin",
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Compile a graph with injectable model, tools and test checkpointer."""
     tool_list = list(tools or [*READ_TOOLS, search_reconciliation_rules])
     tool_node = ToolNode(tool_list)
     resolved_model = model
+    action_provider = (
+        resolution_action_provider or production_resolution_action_provider
+    )
 
     async def collect_case_facts(state: AgentState) -> dict[str, list[AIMessage]]:
         nonlocal resolved_model
@@ -346,6 +417,74 @@ def build_graph(
             "budget_exhausted": bool(overflow),
         }
 
+    def prepare_confirmation(
+        state: AgentState, config: RunnableConfig
+    ) -> dict[str, Any]:
+        proposed = state.get("proposed_resolution")
+        case_id = state.get("case_id")
+        if not isinstance(proposed, dict) or not isinstance(case_id, str):
+            raise ValueError("resolution proposal is required for confirmation")
+        proposal = ResolutionProposal(
+            run_id=_thread_id(config),
+            case_id=case_id,
+            **proposed,
+        )
+        with action_provider() as (confirmation_service, _repository):
+            confirmation_token = confirmation_service.issue(proposal)
+        action_args = {
+            **proposal.model_dump(mode="json"),
+            "confirmation_token": confirmation_token,
+        }
+        return {
+            "confirmation_request": {
+                "action_requests": [
+                    {"name": "resolve_case", "args": action_args}
+                ],
+                "review_configs": [
+                    {
+                        "action_name": "resolve_case",
+                        "allowed_decisions": ["approve", "reject"],
+                    }
+                ],
+            }
+        }
+
+    def await_confirmation(state: AgentState) -> dict[str, Any]:
+        request = state.get("confirmation_request")
+        if not isinstance(request, dict):
+            raise ValueError("confirmation request is missing")
+        return {"confirmation_decision": _confirmation_decision(interrupt(request))}
+
+    def execute_resolution(state: AgentState) -> dict[str, Any]:
+        request = state.get("confirmation_request")
+        decision = state.get("confirmation_decision") or {}
+        if not isinstance(request, dict) or decision.get("type") != "approve":
+            raise ValueError("approved confirmation is required")
+        action_requests = request.get("action_requests")
+        if not isinstance(action_requests, list) or len(action_requests) != 1:
+            raise ValueError("one resolution action is required")
+        original_args = action_requests[0].get("args")
+        if not isinstance(original_args, dict):
+            raise ValueError("resolution arguments are missing")
+        approved_args = dict(original_args)
+        edited_args = decision.get("args")
+        if isinstance(edited_args, dict):
+            approved_args.update(edited_args)
+        token = approved_args.pop("confirmation_token", None)
+        if not isinstance(token, str):
+            raise ValueError("confirmation token is missing")
+        proposal = ResolutionProposal.model_validate(approved_args)
+        result = execute_confirmed_resolution(
+            action_provider,
+            confirmation_token=token,
+            proposal=proposal,
+            confirmed_by=confirmed_by,
+        )
+        return {
+            "resolution_result": result.model_dump(mode="json"),
+            "confirmation_request": None,
+        }
+
     builder = StateGraph(
         AgentState,
         input_schema=InputState,
@@ -357,14 +496,20 @@ def build_graph(
     builder.add_node("validate_evidence", validate_evidence)
     builder.add_node("draft_analysis", draft_analysis)
     builder.add_node("refuse_analysis", refuse_analysis)
+    builder.add_node("prepare_confirmation", prepare_confirmation)
+    builder.add_node("await_confirmation", await_confirmation)
+    builder.add_node("execute_resolution", execute_resolution)
     builder.add_node("finalize", finalize)
     builder.add_edge(START, "parse_request")
     builder.add_conditional_edges("parse_request", _route_after_parse)
     builder.add_conditional_edges("collect_case_facts", _route_after_model)
     builder.add_conditional_edges("tools", _route_after_tools)
     builder.add_conditional_edges("validate_evidence", route_after_validation)
-    builder.add_edge("draft_analysis", "finalize")
+    builder.add_conditional_edges("draft_analysis", _route_after_draft)
     builder.add_edge("refuse_analysis", "finalize")
+    builder.add_edge("prepare_confirmation", "await_confirmation")
+    builder.add_conditional_edges("await_confirmation", _route_after_confirmation)
+    builder.add_edge("execute_resolution", "finalize")
     builder.add_edge("finalize", END)
     return builder.compile(checkpointer=checkpointer, name="Reconciliation Agent")
 
