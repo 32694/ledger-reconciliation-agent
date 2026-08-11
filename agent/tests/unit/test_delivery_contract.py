@@ -350,7 +350,14 @@ def test_frontend_dockerfile_uses_locked_node_and_pnpm_build_stages() -> None:
     dockerfile = REPOSITORY_ROOT / "web" / "Dockerfile"
     instructions = _read_dockerfile_instructions(dockerfile)
 
-    assert instructions[0] == "FROM node:22.14.0-alpine3.21 AS base"
+    node_image = "public.ecr.aws/docker/library/node:22.14.0-alpine3.21"
+    assert instructions[0] == f"FROM {node_image} AS base"
+    assert f"FROM {node_image} AS runner" in instructions
+    assert not any(
+        instruction.startswith("FROM node:")
+        or instruction.startswith("FROM docker.io/")
+        for instruction in instructions
+    )
 
     base = _dockerfile_stage(instructions, "base")
     assert any("pnpm@10.5.1" in instruction for instruction in base)

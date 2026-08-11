@@ -1,4 +1,4 @@
-FROM node:22.14.0-alpine3.21 AS base
+FROM public.ecr.aws/docker/library/node:22.14.0-alpine3.21 AS base
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -29,7 +29,7 @@ ENV NEXT_PUBLIC_ASSISTANT_ID=$NEXT_PUBLIC_ASSISTANT_ID
 COPY . .
 RUN pnpm build
 
-FROM node:22.14.0-alpine3.21 AS runner
+FROM public.ecr.aws/docker/library/node:22.14.0-alpine3.21 AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production
