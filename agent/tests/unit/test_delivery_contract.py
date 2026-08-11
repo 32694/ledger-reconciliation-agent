@@ -46,6 +46,7 @@ def test_root_environment_template_contains_delivery_configuration() -> None:
         "TAVILY_API_KEY",
         "ANTHROPIC_API_KEY",
         "FIREWORKS_API_KEY",
+        "OPENAI_API_KEY",
     ):
         assert removed_variable not in values
 
@@ -75,6 +76,7 @@ def test_agent_environment_template_matches_local_backend_contract() -> None:
         "TAVILY_API_KEY",
         "ANTHROPIC_API_KEY",
         "FIREWORKS_API_KEY",
+        "OPENAI_API_KEY",
     ):
         assert removed_variable not in values
 
@@ -93,10 +95,15 @@ def test_project_metadata_identifies_the_reconciliation_agent() -> None:
     assert metadata["requires-python"] == ">=3.11,<4.0"
     assert "langgraph-cli[inmem]>=0.4.10" in metadata["dependencies"]
 
-    assert "langgraph-cli[inmem]>=0.4.10" not in configuration["dependency-groups"][
-        "dev"
-    ]
-    for dependency in ("pytest>=9.0.3", "httpx>=0.28,<1", "anyio>=4.7.0", "types-pyyaml>=6,<7"):
+    assert (
+        "langgraph-cli[inmem]>=0.4.10" not in configuration["dependency-groups"]["dev"]
+    )
+    for dependency in (
+        "pytest>=9.0.3",
+        "httpx>=0.28,<1",
+        "anyio>=4.7.0",
+        "types-pyyaml>=6,<7",
+    ):
         assert dependency in configuration["dependency-groups"]["dev"]
     assert configuration["project"]["optional-dependencies"]["dev"] == [
         "mypy>=1.11.1",
@@ -123,9 +130,27 @@ def test_lockfile_tracks_the_runtime_cli_dependency_from_official_pypi() -> None
         if "url =" in line:
             assert "https://files.pythonhosted.org/" in line
 
-    assert {dependency["name"] for dependency in project["dependencies"]} >= {
-        "langgraph-cli"
+    runtime_dependency = next(
+        dependency
+        for dependency in project["dependencies"]
+        if dependency["name"] == "langgraph-cli"
+    )
+    required_distribution = next(
+        dependency
+        for dependency in project["metadata"]["requires-dist"]
+        if dependency["name"] == "langgraph-cli"
+    )
+    development_dependencies = project["metadata"]["requires-dev"]["dev"]
+
+    assert runtime_dependency["extra"] == ["inmem"]
+    assert required_distribution["extras"] == ["inmem"]
+    assert required_distribution["specifier"] == ">=0.4.10"
+    assert "langgraph-cli" not in {
+        dependency["name"] for dependency in development_dependencies
     }
-    assert {dependency["name"] for dependency in project["metadata"]["requires-dist"]} >= {
-        "langgraph-cli"
+    assert {dependency["name"] for dependency in development_dependencies} >= {
+        "anyio",
+        "httpx",
+        "pytest",
+        "types-pyyaml",
     }
