@@ -285,7 +285,7 @@ def test_backend_dockerfile_uses_ephemeral_cache_for_every_sync() -> None:
     assert all("--mount=type=cache" in sync for sync in syncs)
 
 
-def test_backend_runtime_installs_only_locked_noneditable_project() -> None:
+def test_backend_runtime_installs_locked_editable_project() -> None:
     dockerfile = REPOSITORY_ROOT / "agent" / "Dockerfile"
     instructions = _read_dockerfile_instructions(dockerfile)
     runtime = _dockerfile_stage(instructions, "runtime")
@@ -301,7 +301,7 @@ def test_backend_runtime_installs_only_locked_noneditable_project() -> None:
     assert "--no-install-project" in syncs[0]
     assert "--frozen" in syncs[1]
     assert "--no-dev" in syncs[1]
-    assert "--no-editable" in syncs[1]
+    assert "--no-editable" not in syncs[1]
     assert all(
         "--mount=type=cache,target=/home/app/.cache/uv,uid=10001,gid=10001" in sync
         for sync in syncs

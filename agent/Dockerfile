@@ -38,7 +38,7 @@ COPY --chown=app:app knowledge/ knowledge/
 COPY --chown=app:app alembic.ini langgraph.json ./
 COPY --chown=app:app --chmod=0755 docker-entrypoint.sh ./docker-entrypoint.sh
 RUN --mount=type=cache,target=/home/app/.cache/uv,uid=10001,gid=10001 \
-    uv sync --frozen --no-dev --no-editable
+    uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
