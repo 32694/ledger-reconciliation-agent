@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from reconciliation_agent.domain.repository import ReconciliationRepository
 from reconciliation_agent.domain.seed import seed_demo_data
 from reconciliation_agent.rag.retriever import RuleCitation
+from reconciliation_agent.runs import RunService, RunServiceProvider
 from reconciliation_agent.state import EvidenceStatus
 from reconciliation_agent.tools.cases import build_case_tool
 from reconciliation_agent.tools.ledger import build_ledger_tool
@@ -135,6 +136,15 @@ def _build_test_tools(session: Session) -> list[BaseTool]:
     ]
 
 
+def _build_test_run_provider(session: Session) -> RunServiceProvider:
+    @contextmanager
+    def provider() -> Iterator[RunService]:
+        with session.begin_nested():
+            yield RunService(session)
+
+    return provider
+
+
 @pytest.mark.anyio
 async def test_complete_evidence_produces_cited_analysis_and_checkpoint(
     session: Session,
@@ -145,7 +155,13 @@ async def test_complete_evidence_produces_cited_analysis_and_checkpoint(
         responses=_analysis_responses("CASE-1001", "RULE-ALIPAY-V1")
     )
     tools = _build_test_tools(session)
-    graph = build_graph(model=model, tools=tools, checkpointer=saver)
+    run_provider = _build_test_run_provider(session)
+    graph = build_graph(
+        model=model,
+        tools=tools,
+        checkpointer=saver,
+        run_service_provider=run_provider,
+    )
     config: RunnableConfig = {
         "configurable": {"thread_id": "THREAD-CASE-1001"}
     }
@@ -168,7 +184,12 @@ async def test_complete_evidence_produces_cited_analysis_and_checkpoint(
     }
     assert result["final_response"]["status"] == "READY"
 
-    fresh_graph = build_graph(model=model, tools=tools, checkpointer=saver)
+    fresh_graph = build_graph(
+        model=model,
+        tools=tools,
+        checkpointer=saver,
+        run_service_provider=run_provider,
+    )
     restored = await fresh_graph.aget_state(config)
     assert restored.values["final_response"] == result["final_response"]
 
@@ -184,6 +205,7 @@ async def test_missing_locked_rule_returns_deterministic_refusal(
         ),
         tools=_build_test_tools(session),
         checkpointer=InMemorySaver(),
+        run_service_provider=_build_test_run_provider(session),
     )
 
     result = await graph.ainvoke(
@@ -222,6 +244,7 @@ async def test_new_turn_cannot_reuse_previous_turn_evidence(session: Session) ->
         model=model,
         tools=_build_test_tools(session),
         checkpointer=InMemorySaver(),
+        run_service_provider=_build_test_run_provider(session),
     )
     config: RunnableConfig = {"configurable": {"thread_id": "THREAD-TWO-TURNS"}}
     await graph.ainvoke(
@@ -254,6 +277,7 @@ async def test_tool_budget_stops_after_eight_calls(session: Session) -> None:
         model=ScriptedChatModel(responses=[AIMessage(content="", tool_calls=calls)]),
         tools=_build_test_tools(session),
         checkpointer=InMemorySaver(),
+        run_service_provider=_build_test_run_provider(session),
     )
 
     result = await graph.ainvoke(

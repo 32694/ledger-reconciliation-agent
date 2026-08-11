@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import Sequence
 from typing import Any, Literal, cast
+from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -29,6 +30,15 @@ from reconciliation_agent.domain.models import ResolutionCode, ResultType
 from reconciliation_agent.domain.schemas import ResolutionProposal
 from reconciliation_agent.model import build_chat_model, invoke_model_with_retry
 from reconciliation_agent.prompts import SYSTEM_PROMPT
+from reconciliation_agent.runs import (
+    ERROR_MESSAGES,
+    PublicError,
+    RunServiceProvider,
+    RunStatus,
+    production_run_service_provider,
+    public_error,
+    summarize_tool_messages,
+)
 from reconciliation_agent.settings import get_settings
 from reconciliation_agent.state import (
     AgentState,
@@ -95,16 +105,24 @@ def parse_request(state: AgentState) -> dict[str, Any]:
             EvidenceStatus.UNKNOWN.value if case_id else EvidenceStatus.MISSING_CASE.value
         ),
         "budget_exhausted": False,
+        "run_persisted": False,
+        "public_error": None,
     }
 
 
 def _route_after_parse(
     state: AgentState,
-) -> Literal["collect_case_facts", "refuse_analysis"]:
+) -> Literal["collect_case_facts", "refuse_analysis", "finalize"]:
+    if state.get("public_error"):
+        return "finalize"
     return "collect_case_facts" if state.get("case_id") else "refuse_analysis"
 
 
-def _route_after_model(state: AgentState) -> Literal["tools", "validate_evidence"]:
+def _route_after_model(
+    state: AgentState,
+) -> Literal["tools", "validate_evidence", "finalize"]:
+    if state.get("public_error"):
+        return "finalize"
     last_message = state["messages"][-1]
     if isinstance(last_message, AIMessage) and last_message.tool_calls:
         return "tools"
@@ -113,7 +131,9 @@ def _route_after_model(state: AgentState) -> Literal["tools", "validate_evidence
 
 def _route_after_tools(
     state: AgentState,
-) -> Literal["collect_case_facts", "validate_evidence"]:
+) -> Literal["collect_case_facts", "validate_evidence", "finalize"]:
+    if state.get("public_error"):
+        return "finalize"
     if state.get("budget_exhausted"):
         return "validate_evidence"
     return "collect_case_facts"
@@ -145,15 +165,19 @@ def _decode_tool_message(message: ToolMessage) -> dict[str, Any] | None:
 
 def _collect_tool_evidence(
     messages: Sequence[AnyMessage],
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
     facts: dict[str, Any] = {}
     citations: list[dict[str, Any]] = []
+    errors: list[str] = []
     calls = _tool_calls_by_id(messages)
     for message in messages:
         if not isinstance(message, ToolMessage):
             continue
         value = _decode_tool_message(message)
-        if value is None or "error" in value:
+        if value is None:
+            continue
+        if isinstance(value.get("error"), str):
+            errors.append(value["error"])
             continue
         if message.name == "get_reconciliation_case":
             facts["case"] = value
@@ -173,7 +197,7 @@ def _collect_tool_evidence(
             raw_citations = value.get("citations", [])
             if isinstance(raw_citations, list):
                 citations = [item for item in raw_citations if isinstance(item, dict)]
-    return facts, citations
+    return facts, citations, errors
 
 
 def _has_required_structured_facts(
@@ -197,8 +221,20 @@ def _has_required_structured_facts(
 
 def validate_evidence(state: AgentState) -> dict[str, Any]:
     """Accept only matching structured facts and exact-version rule citations."""
-    facts, citations = _collect_tool_evidence(_current_turn_messages(state["messages"]))
+    facts, citations, errors = _collect_tool_evidence(
+        _current_turn_messages(state["messages"])
+    )
     case = facts.get("case")
+    if "DEPENDENCY_UNAVAILABLE" in errors:
+        return {
+            "collected_facts": facts,
+            "citations": [],
+            "evidence_status": EvidenceStatus.UNKNOWN.value,
+            "public_error": {
+                "code": "DATABASE_UNAVAILABLE",
+                "message": ERROR_MESSAGES["DATABASE_UNAVAILABLE"],
+            },
+        }
     if state.get("budget_exhausted"):
         status: EvidenceStatusValue = EvidenceStatus.TOOL_BUDGET_EXHAUSTED.value
     elif not isinstance(case, dict):
@@ -231,8 +267,10 @@ def validate_evidence(state: AgentState) -> dict[str, Any]:
 
 def route_after_validation(
     state: dict[str, Any],
-) -> Literal["draft_analysis", "refuse_analysis"]:
+) -> Literal["draft_analysis", "refuse_analysis", "finalize"]:
     """Route complete evidence to drafting and every gap to deterministic refusal."""
+    if state.get("public_error"):
+        return "finalize"
     if state.get("evidence_status") == EvidenceStatus.COMPLETE:
         return "draft_analysis"
     return "refuse_analysis"
@@ -273,13 +311,6 @@ def _route_after_draft(
     return "finalize"
 
 
-def _thread_id(config: RunnableConfig) -> str:
-    thread_id = config.get("configurable", {}).get("thread_id")
-    if not isinstance(thread_id, str) or not thread_id:
-        raise ValueError("thread_id is required for confirmation")
-    return thread_id
-
-
 def _confirmation_decision(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("confirmation decision must be an object")
@@ -298,8 +329,16 @@ def _confirmation_decision(value: Any) -> dict[str, Any]:
 def _route_after_confirmation(
     state: AgentState,
 ) -> Literal["execute_resolution", "finalize"]:
+    if state.get("public_error"):
+        return "finalize"
     decision = state.get("confirmation_decision") or {}
     return "execute_resolution" if decision.get("type") == "approve" else "finalize"
+
+
+def _route_after_confirmation_preparation(
+    state: AgentState,
+) -> Literal["await_confirmation", "finalize"]:
+    return "finalize" if state.get("public_error") else "await_confirmation"
 
 
 def finalize(state: AgentState) -> dict[str, Any]:
@@ -307,7 +346,15 @@ def finalize(state: AgentState) -> dict[str, Any]:
     draft = state.get("draft_analysis")
     resolution_result = state.get("resolution_result")
     decision = state.get("confirmation_decision") or {}
-    if isinstance(resolution_result, dict):
+    failure = state.get("public_error")
+    response: dict[str, Any]
+    if isinstance(failure, dict):
+        response = {
+            "status": "FAILED",
+            "case_id": state.get("case_id"),
+            "error": failure,
+        }
+    elif isinstance(resolution_result, dict):
         response = {
             "status": "RESOLVED",
             "case_id": state.get("case_id"),
@@ -333,10 +380,18 @@ def finalize(state: AgentState) -> dict[str, Any]:
         }
     else:
         evidence_status = state.get("evidence_status", EvidenceStatus.UNKNOWN.value)
+        error_code = {
+            EvidenceStatus.MISSING_RULE.value: "RULE_VERSION_NOT_FOUND",
+            EvidenceStatus.TOOL_BUDGET_EXHAUSTED.value: "TOOL_BUDGET_EXHAUSTED",
+        }.get(evidence_status)
         response = {
             "status": "INSUFFICIENT_EVIDENCE",
             "case_id": state.get("case_id"),
-            "summary": "证据不完整，无法生成可靠的对账结论。",
+            "summary": (
+                ERROR_MESSAGES[error_code]
+                if error_code
+                else "证据不完整，无法生成可靠的对账结论。"
+            ),
             "evidence_status": evidence_status,
             "citations": [],
             "resolution_recommendation": None,
@@ -351,6 +406,7 @@ def build_graph(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     max_tool_calls: int = 8,
     resolution_action_provider: ResolutionActionProvider | None = None,
+    run_service_provider: RunServiceProvider | None = None,
     confirmed_by: str = "demo-admin",
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Compile a graph with injectable model, tools and test checkpointer."""
@@ -360,38 +416,91 @@ def build_graph(
     action_provider = (
         resolution_action_provider or production_resolution_action_provider
     )
+    runs_provider = run_service_provider or production_run_service_provider
 
-    async def collect_case_facts(state: AgentState) -> dict[str, list[AIMessage]]:
+    def fail_run(state: AgentState, error: BaseException) -> dict[str, Any]:
+        safe_error = public_error(error)
+        run_id = state.get("run_id")
+        if state.get("run_persisted") and isinstance(run_id, str):
+            failed_response = {
+                "status": "FAILED",
+                "case_id": state.get("case_id"),
+                "error": safe_error.model_dump(),
+            }
+            try:
+                with runs_provider() as service:
+                    service.finish(
+                        run_id,
+                        status=RunStatus.FAILED,
+                        citations=[],
+                        final_response=failed_response,
+                        error=safe_error,
+                    )
+            except Exception:
+                pass
+        return {"public_error": safe_error.model_dump()}
+
+    def start_run(state: AgentState) -> dict[str, Any]:
+        current_messages = _current_turn_messages(state["messages"])
+        question = _message_text(current_messages[0]) if current_messages else ""
+        try:
+            with runs_provider() as service:
+                run_id = service.start(question)
+        except Exception as error:
+            return {
+                "run_id": f"UNPERSISTED-{uuid4()}",
+                "run_persisted": False,
+                "public_error": public_error(error).model_dump(),
+            }
+        return {"run_id": run_id, "run_persisted": True}
+
+    async def collect_case_facts(state: AgentState) -> dict[str, Any]:
         nonlocal resolved_model
-        if resolved_model is None:
-            resolved_model = build_chat_model(get_settings())
-        bound_model = resolved_model.bind_tools(tool_list)
-        prompt = SYSTEM_PROMPT.format(
-            case_id=state.get("case_id") or "UNKNOWN",
-            max_tool_calls=max_tool_calls,
-        )
-        response = await invoke_model_with_retry(
-            bound_model,
-            [SystemMessage(content=prompt), *_current_turn_messages(state["messages"])],
-        )
+        try:
+            if resolved_model is None:
+                resolved_model = build_chat_model(get_settings())
+            bound_model = resolved_model.bind_tools(tool_list)
+            prompt = SYSTEM_PROMPT.format(
+                case_id=state.get("case_id") or "UNKNOWN",
+                max_tool_calls=max_tool_calls,
+            )
+            response = await invoke_model_with_retry(
+                bound_model,
+                [
+                    SystemMessage(content=prompt),
+                    *_current_turn_messages(state["messages"]),
+                ],
+            )
+        except Exception as error:
+            return fail_run(state, error)
         return {"messages": [response]}
 
     async def execute_tools(
         state: AgentState, config: RunnableConfig
     ) -> dict[str, Any]:
-        last_message = state["messages"][-1]
-        if not isinstance(last_message, AIMessage):
-            return {}
-        remaining = max(0, max_tool_calls - state.get("tool_call_count", 0))
-        allowed = last_message.tool_calls[:remaining]
-        overflow = last_message.tool_calls[remaining:]
-        messages: list[ToolMessage] = []
-        if allowed:
-            bounded_request = AIMessage(content="", tool_calls=allowed)
-            tool_result = await tool_node.ainvoke(
-                {"messages": [bounded_request]}, config=config
-            )
-            messages.extend(cast(list[ToolMessage], tool_result["messages"]))
+        try:
+            last_message = state["messages"][-1]
+            if not isinstance(last_message, AIMessage):
+                return {}
+            remaining = max(0, max_tool_calls - state.get("tool_call_count", 0))
+            allowed = last_message.tool_calls[:remaining]
+            overflow = last_message.tool_calls[remaining:]
+            messages: list[ToolMessage] = []
+            if allowed:
+                bounded_request = AIMessage(content="", tool_calls=allowed)
+                tool_result = await tool_node.ainvoke(
+                    {"messages": [bounded_request]}, config=config
+                )
+                messages.extend(cast(list[ToolMessage], tool_result["messages"]))
+            run_id = state.get("run_id")
+            if allowed and isinstance(run_id, str) and state.get("run_persisted"):
+                with runs_provider() as service:
+                    service.record_tools(
+                        run_id,
+                        summarize_tool_messages(messages[: len(allowed)]),
+                    )
+        except Exception as error:
+            return fail_run(state, error)
         messages.extend(
             ToolMessage(
                 content=json.dumps(
@@ -417,20 +526,29 @@ def build_graph(
             "budget_exhausted": bool(overflow),
         }
 
-    def prepare_confirmation(
-        state: AgentState, config: RunnableConfig
-    ) -> dict[str, Any]:
+    def prepare_confirmation(state: AgentState) -> dict[str, Any]:
         proposed = state.get("proposed_resolution")
         case_id = state.get("case_id")
-        if not isinstance(proposed, dict) or not isinstance(case_id, str):
-            raise ValueError("resolution proposal is required for confirmation")
-        proposal = ResolutionProposal(
-            run_id=_thread_id(config),
-            case_id=case_id,
-            **proposed,
-        )
-        with action_provider() as (confirmation_service, _repository):
-            confirmation_token = confirmation_service.issue(proposal)
+        run_id = state.get("run_id")
+        try:
+            if (
+                not isinstance(proposed, dict)
+                or not isinstance(case_id, str)
+                or not isinstance(run_id, str)
+            ):
+                raise ValueError("resolution proposal is required for confirmation")
+            proposal = ResolutionProposal(
+                run_id=run_id,
+                case_id=case_id,
+                **proposed,
+            )
+            with action_provider() as (confirmation_service, _repository):
+                confirmation_token = confirmation_service.issue(proposal)
+            if state.get("run_persisted"):
+                with runs_provider() as service:
+                    service.mark_waiting(run_id)
+        except Exception as error:
+            return fail_run(state, error)
         action_args = {
             **proposal.model_dump(mode="json"),
             "confirmation_token": confirmation_token,
@@ -452,38 +570,79 @@ def build_graph(
     def await_confirmation(state: AgentState) -> dict[str, Any]:
         request = state.get("confirmation_request")
         if not isinstance(request, dict):
-            raise ValueError("confirmation request is missing")
-        return {"confirmation_decision": _confirmation_decision(interrupt(request))}
+            return fail_run(state, ValueError("confirmation request is missing"))
+        decision_value = interrupt(request)
+        try:
+            decision = _confirmation_decision(decision_value)
+        except Exception as error:
+            return fail_run(state, error)
+        return {"confirmation_decision": decision}
 
     def execute_resolution(state: AgentState) -> dict[str, Any]:
-        request = state.get("confirmation_request")
-        decision = state.get("confirmation_decision") or {}
-        if not isinstance(request, dict) or decision.get("type") != "approve":
-            raise ValueError("approved confirmation is required")
-        action_requests = request.get("action_requests")
-        if not isinstance(action_requests, list) or len(action_requests) != 1:
-            raise ValueError("one resolution action is required")
-        original_args = action_requests[0].get("args")
-        if not isinstance(original_args, dict):
-            raise ValueError("resolution arguments are missing")
-        approved_args = dict(original_args)
-        edited_args = decision.get("args")
-        if isinstance(edited_args, dict):
-            approved_args.update(edited_args)
-        token = approved_args.pop("confirmation_token", None)
-        if not isinstance(token, str):
-            raise ValueError("confirmation token is missing")
-        proposal = ResolutionProposal.model_validate(approved_args)
-        result = execute_confirmed_resolution(
-            action_provider,
-            confirmation_token=token,
-            proposal=proposal,
-            confirmed_by=confirmed_by,
-        )
+        try:
+            request = state.get("confirmation_request")
+            decision = state.get("confirmation_decision") or {}
+            if not isinstance(request, dict) or decision.get("type") != "approve":
+                raise ValueError("approved confirmation is required")
+            action_requests = request.get("action_requests")
+            if not isinstance(action_requests, list) or len(action_requests) != 1:
+                raise ValueError("one resolution action is required")
+            original_args = action_requests[0].get("args")
+            if not isinstance(original_args, dict):
+                raise ValueError("resolution arguments are missing")
+            approved_args = dict(original_args)
+            edited_args = decision.get("args")
+            if isinstance(edited_args, dict):
+                approved_args.update(edited_args)
+            token = approved_args.pop("confirmation_token", None)
+            if not isinstance(token, str):
+                raise ValueError("confirmation token is missing")
+            proposal = ResolutionProposal.model_validate(approved_args)
+            result = execute_confirmed_resolution(
+                action_provider,
+                confirmation_token=token,
+                proposal=proposal,
+                confirmed_by=confirmed_by,
+            )
+        except Exception as error:
+            return {**fail_run(state, error), "confirmation_request": None}
         return {
             "resolution_result": result.model_dump(mode="json"),
             "confirmation_request": None,
         }
+
+    def persist_finalize(state: AgentState) -> dict[str, Any]:
+        updates = finalize(state)
+        response = cast(dict[str, Any], updates["final_response"])
+        run_id = state.get("run_id")
+        if not state.get("run_persisted") or not isinstance(run_id, str):
+            return updates
+        if response["status"] in {"READY", "RESOLVED"}:
+            status = RunStatus.COMPLETED
+        elif response["status"] == "FAILED":
+            status = RunStatus.FAILED
+        else:
+            status = RunStatus.REJECTED
+        safe_error = None
+        if status is RunStatus.FAILED and isinstance(state.get("public_error"), dict):
+            safe_error = PublicError.model_validate(state["public_error"])
+        try:
+            with runs_provider() as service:
+                service.finish(
+                    run_id,
+                    status=status,
+                    citations=state.get("citations", []),
+                    final_response=response,
+                    error=safe_error,
+                )
+        except Exception as error:
+            failed_state = cast(AgentState, dict(state))
+            failure_update = fail_run(state, error)
+            failed_state["public_error"] = cast(
+                dict[str, str], failure_update["public_error"]
+            )
+            return finalize(failed_state)
+        return updates
 
     builder = StateGraph(
         AgentState,
@@ -491,6 +650,7 @@ def build_graph(
         context_schema=AgentContext,
     )
     builder.add_node("parse_request", parse_request)
+    builder.add_node("start_run", start_run)
     builder.add_node("collect_case_facts", collect_case_facts)
     builder.add_node("tools", execute_tools)
     builder.add_node("validate_evidence", validate_evidence)
@@ -499,15 +659,18 @@ def build_graph(
     builder.add_node("prepare_confirmation", prepare_confirmation)
     builder.add_node("await_confirmation", await_confirmation)
     builder.add_node("execute_resolution", execute_resolution)
-    builder.add_node("finalize", finalize)
+    builder.add_node("finalize", persist_finalize)
     builder.add_edge(START, "parse_request")
-    builder.add_conditional_edges("parse_request", _route_after_parse)
+    builder.add_edge("parse_request", "start_run")
+    builder.add_conditional_edges("start_run", _route_after_parse)
     builder.add_conditional_edges("collect_case_facts", _route_after_model)
     builder.add_conditional_edges("tools", _route_after_tools)
     builder.add_conditional_edges("validate_evidence", route_after_validation)
     builder.add_conditional_edges("draft_analysis", _route_after_draft)
     builder.add_edge("refuse_analysis", "finalize")
-    builder.add_edge("prepare_confirmation", "await_confirmation")
+    builder.add_conditional_edges(
+        "prepare_confirmation", _route_after_confirmation_preparation
+    )
     builder.add_conditional_edges("await_confirmation", _route_after_confirmation)
     builder.add_edge("execute_resolution", "finalize")
     builder.add_edge("finalize", END)

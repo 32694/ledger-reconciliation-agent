@@ -17,7 +17,10 @@ from reconciliation_agent.domain.models import (
     CaseStatus,
     ConfirmationToken,
 )
-from reconciliation_agent.domain.repository import ReconciliationRepository
+from reconciliation_agent.domain.repository import (
+    AgentRunRepository,
+    ReconciliationRepository,
+)
 from reconciliation_agent.domain.seed import seed_demo_data
 from reconciliation_agent.safety.confirmations import ConfirmationService
 from reconciliation_agent.tools.resolution import ResolutionActionProvider
@@ -26,6 +29,7 @@ from reconciliation_agent.workflow import build_graph
 from .test_analysis_workflow import (
     ScriptedChatModel,
     _analysis_responses,
+    _build_test_run_provider,
     _build_test_tools,
 )
 
@@ -71,6 +75,7 @@ async def test_reject_keeps_case_open(session: Session) -> None:
         tools=_build_test_tools(session),
         checkpointer=InMemorySaver(),
         resolution_action_provider=_action_provider(session),
+        run_service_provider=_build_test_run_provider(session),
     )
     config: RunnableConfig = {"configurable": {"thread_id": "THREAD-REJECT"}}
     interrupted = await graph.ainvoke(
@@ -85,6 +90,7 @@ async def test_reject_keeps_case_open(session: Session) -> None:
     assert ReconciliationRepository(session).get_case("CASE-1001").status is CaseStatus.OPEN
     assert session.scalar(select(func.count()).select_from(CaseResolution)) == 0
     assert result["final_response"]["status"] == "REJECTED"
+    assert AgentRunRepository(session).get(result["run_id"]).status == "REJECTED"
 
 
 @pytest.mark.anyio
@@ -107,6 +113,7 @@ async def test_approve_resumes_with_fresh_postgres_graph_and_resolves_once(
             tools=_build_test_tools(session),
             checkpointer=first_saver,
             resolution_action_provider=provider,
+            run_service_provider=_build_test_run_provider(session),
         )
         interrupted = await first_graph.ainvoke(
             {"messages": [("user", "解决 CASE-1001")]}, config=config
@@ -118,6 +125,10 @@ async def test_approve_resumes_with_fresh_postgres_graph_and_resolves_once(
     stored = session.scalar(select(ConfirmationToken))
     assert stored is not None
     assert token != stored.token_hash
+    assert (
+        AgentRunRepository(session).get(interrupted["run_id"]).status
+        == "WAITING_CONFIRMATION"
+    )
 
     async with AsyncPostgresSaver.from_conn_string(postgres_url) as second_saver:
         fresh_graph = build_graph(
@@ -125,6 +136,7 @@ async def test_approve_resumes_with_fresh_postgres_graph_and_resolves_once(
             tools=_build_test_tools(session),
             checkpointer=second_saver,
             resolution_action_provider=provider,
+            run_service_provider=_build_test_run_provider(session),
         )
         result = await fresh_graph.ainvoke(
             Command[Any](resume={"decisions": [{"type": "approve"}]}), config=config
@@ -136,3 +148,4 @@ async def test_approve_resumes_with_fresh_postgres_graph_and_resolves_once(
     assert session.scalar(select(func.count()).select_from(ConfirmationToken)) == 1
     assert result["final_response"]["status"] == "RESOLVED"
     assert token not in str(result)
+    assert AgentRunRepository(session).get(result["run_id"]).status == "COMPLETED"

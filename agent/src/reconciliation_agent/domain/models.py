@@ -282,3 +282,21 @@ class AgentRun(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    @property
+    def tool_names(self) -> list[str]:
+        """Return recorded tool names in execution order."""
+        return [
+            str(item["name"])
+            for item in self.tool_calls
+            if isinstance(item, dict) and "name" in item
+        ]
+
+    @property
+    def citation_ids(self) -> list[str]:
+        """Return stored citation identifiers in retrieval order."""
+        return [
+            str(item["chunk_id"])
+            for item in self.citations
+            if isinstance(item, dict) and "chunk_id" in item
+        ]

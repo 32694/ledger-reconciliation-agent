@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from reconciliation_agent.domain.models import (
+    AgentRun,
     AuditEvent,
     CaseResolution,
     CaseStatus,
@@ -22,6 +23,43 @@ class CaseNotFoundError(Exception):
 
 class CaseAlreadyResolvedError(Exception):
     """Raised when a reconciliation case already has a resolution."""
+
+
+class AgentRunNotFoundError(Exception):
+    """Raised when a requested Agent run does not exist."""
+
+
+class AgentRunRepository:
+    """Persistence boundary for Agent investigation runs."""
+
+    def __init__(self, session: Session) -> None:
+        """Bind run persistence to one database session."""
+        self._session = session
+
+    def create(self, *, run_id: str, question: str, status: str) -> AgentRun:
+        """Create a new run with empty evidence summaries."""
+        run = AgentRun(
+            run_id=run_id,
+            question=question,
+            tool_calls=[],
+            citations=[],
+            conclusion=None,
+            status=status,
+            error_message=None,
+        )
+        self._session.add(run)
+        self._session.flush()
+        return run
+
+    def get(self, run_id: str, *, for_update: bool = False) -> AgentRun:
+        """Return one run, optionally locking it for a state transition."""
+        statement = select(AgentRun).where(AgentRun.run_id == run_id)
+        if for_update:
+            statement = statement.with_for_update()
+        run = self._session.scalar(statement)
+        if run is None:
+            raise AgentRunNotFoundError(run_id)
+        return run
 
 
 class ReconciliationRepository:

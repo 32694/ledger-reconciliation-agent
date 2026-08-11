@@ -42,6 +42,8 @@ class AgentState(InputState, total=False):
     """Evidence, routing and response state persisted by LangGraph."""
 
     case_id: str | None
+    run_id: str
+    run_persisted: bool
     intent: Literal["ANALYZE", "RESOLVE"]
     tool_call_count: int
     tool_call_history: list[str]
@@ -53,5 +55,6 @@ class AgentState(InputState, total=False):
     confirmation_request: NotRequired[dict[str, Any] | None]
     confirmation_decision: NotRequired[dict[str, Any] | None]
     resolution_result: NotRequired[dict[str, Any] | None]
+    public_error: NotRequired[dict[str, str] | None]
     final_response: dict[str, Any]
     budget_exhausted: bool
