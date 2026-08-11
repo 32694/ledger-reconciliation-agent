@@ -1,7 +1,7 @@
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
-from reconciliation_agent.settings import Settings, get_database_settings
+from reconciliation_agent.settings import Settings, get_database_settings, get_settings
 
 
 def test_model_key_is_required_outside_tests() -> None:
@@ -22,6 +22,30 @@ def test_secret_is_not_rendered() -> None:
         model_api_key="secret-value",
     )
     assert "secret-value" not in repr(settings)
+
+
+def test_settings_load_model_and_database_values_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_api_key = "model-api-key-marker"
+    monkeypatch.setenv("MODEL_BASE_URL", "https://model.example.test/v1")
+    monkeypatch.setenv("MODEL_API_KEY", model_api_key)
+    monkeypatch.setenv("MODEL_NAME", "ledger-model")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+psycopg://agent:password@localhost/agent"
+    )
+    get_settings.cache_clear()
+
+    try:
+        settings = get_settings()
+        assert settings.model_base_url == "https://model.example.test/v1"
+        assert settings.model_name == "ledger-model"
+        assert isinstance(settings.model_api_key, SecretStr)
+        assert settings.model_api_key.get_secret_value() == model_api_key
+        assert settings.database_url_for_sqlalchemy.endswith("@localhost/agent")
+        assert model_api_key not in repr(settings)
+    finally:
+        get_settings.cache_clear()
 
 
 def test_database_password_is_not_rendered_or_serialized() -> None:

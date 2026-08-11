@@ -1,9 +1,9 @@
 [project]
-name = "react-agent"
+name = "ledger-reconciliation-agent"
 version = "0.0.1"
-description = "Starter template for making a custom Reasoning and Action agent (using tool calling) in LangGraph."
+description = "Evidence-constrained ledger reconciliation agent."
 authors = [
-    { name = "William Fu-Hinthorn", email = "13333726+hinthornw@users.noreply.github.com" },
+    { name = "32694" },
 ]
 readme = "README.md"
 license = { text = "MIT" }
@@ -21,6 +21,7 @@ dependencies = [
     "sentence-transformers>=5,<6",
     "tenacity>=9,<10",
     "pyyaml>=6,<7",
+    "langgraph-cli[inmem]>=0.4.10",
 ]
 
 
@@ -83,7 +84,6 @@ constraint-dependencies = ["pyjwt>=2.12.0"]
 dev = [
     "anyio>=4.7.0",
     "httpx>=0.28,<1",
-    "langgraph-cli[inmem]>=0.4.10",
     "pytest>=9.0.3",
     "types-pyyaml>=6,<7",
 ]
