@@ -65,7 +65,7 @@ if [[ "$health" != "postgres healthy" ]]; then
 fi
 
 if ! "${compose[@]}" exec -T postgres sh -c \
-  'pg_restore --clean --if-exists --no-owner --dbname="$POSTGRES_DB"' <"$backup_path"; then
+  'pg_restore --clean --if-exists --no-owner --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' <"$backup_path"; then
   printf '%s\n' '恢复失败，原备份文件保持不变。' >&2
   exit 1
 fi

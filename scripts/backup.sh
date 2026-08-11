@@ -30,7 +30,8 @@ mkdir -p -- "$parent_dir"
 temporary_path="$(mktemp "$parent_dir/.agent-backup.XXXXXX")"
 
 compose=(docker compose --env-file "$ROOT_DIR/.env" -f "$ROOT_DIR/compose.yaml")
-if ! "${compose[@]}" exec -T postgres pg_dump --format=custom >"$temporary_path"; then
+if ! "${compose[@]}" exec -T postgres sh -c \
+  'pg_dump --format=custom --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' >"$temporary_path"; then
   printf '备份失败，已保留临时文件：%s\n' "$temporary_path" >&2
   exit 1
 fi

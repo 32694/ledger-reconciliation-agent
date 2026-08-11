@@ -894,3 +894,14 @@ def test_backup_and_restore_scripts_forbid_destructive_cleanup() -> None:
     )
     assert "docker compose down -v" not in contents
     assert "rm -rf" not in contents
+
+
+def test_backup_and_restore_pin_postgres_identity_inside_container() -> None:
+    scripts_root = REPOSITORY_ROOT / "scripts"
+    backup = (scripts_root / "backup.sh").read_text(encoding="utf-8")
+    restore = (scripts_root / "restore.sh").read_text(encoding="utf-8")
+
+    assert "sh -c" in backup
+    assert "pg_dump --format=custom --username=\"$POSTGRES_USER\" --dbname=\"$POSTGRES_DB\"" in backup
+    assert "sh -c" in restore
+    assert "pg_restore --clean --if-exists --no-owner --username=\"$POSTGRES_USER\" --dbname=\"$POSTGRES_DB\"" in restore
