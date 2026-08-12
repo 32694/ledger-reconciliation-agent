@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import tomllib
 from pathlib import Path
@@ -1055,6 +1056,7 @@ def test_root_readme_documents_the_complete_delivery_contract_in_order() -> None
         "## 核心能力",
         "## 架构",
         "## 三分钟演示",
+        "## 界面预览",
         "## 技术栈",
         "## 快速启动",
         "## 无 Key 验证",
@@ -1085,9 +1087,29 @@ def test_root_readme_documents_the_complete_delivery_contract_in_order() -> None
     ):
         assert required_text in contents
 
-    assert "docs/images" not in contents
+    for image_name in (
+        "docs/images/analysis-workbench.png",
+        "docs/images/resolution-confirmation.png",
+        "docs/images/resolved-case.png",
+    ):
+        assert image_name in contents
     assert "截图待补充" not in contents
     assert "placeholder" not in contents.lower()
+
+
+def test_readme_screenshots_are_nonempty_png_files() -> None:
+    for image_name in (
+        "analysis-workbench.png",
+        "resolution-confirmation.png",
+        "resolved-case.png",
+    ):
+        image = REPOSITORY_ROOT / "docs" / "images" / image_name
+        contents = image.read_bytes()
+        assert contents.startswith(b"\x89PNG\r\n\x1a\n")
+        assert len(contents) > 1024
+        width, height = struct.unpack(">II", contents[16:24])
+        assert width >= 1280
+        assert height >= 720
 
 
 def test_user_and_migration_guides_cover_safe_end_to_end_operations() -> None:
