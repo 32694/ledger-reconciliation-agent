@@ -544,6 +544,8 @@ def test_delivery_scripts_are_executable_and_preserve_data() -> None:
     assert "reconciliation_agent.evaluation" in verify
     assert "/workspace/artifacts/evaluation.json" in verify
     assert "MODEL_API_KEY" not in verify
+    assert "docker inspect --format" in verify
+    assert ".State.Health" in verify
     migration = "python -m reconciliation_agent.cli migrate"
     assert migration in verify
     assert verify.index(migration) < verify.index("python -m pytest -q")

@@ -27,8 +27,19 @@ run_logged "$PYTHON_LOG" "${compose[@]}" "${profiles[@]}" build postgres-test ag
 run_logged "$PYTHON_LOG" "${compose[@]}" "${profiles[@]}" up -d postgres-test agent-verify web-verify
 
 deadline=$((SECONDS + ${VERIFY_TIMEOUT_SECONDS:-180}))
-for service in postgres-test agent-verify web-verify; do
-  until [[ "$("${compose[@]}" ps --format '{{.Service}} {{.Health}}' "$service" 2>/dev/null || true)" == *healthy* ]]; do
+wait_for_health() {
+  local service="$1"
+  while :; do
+    local container_id
+    local status
+    container_id="$("${compose[@]}" ps -q "$service" 2>/dev/null || true)"
+    status=""
+    if [[ -n "$container_id" ]]; then
+      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+    fi
+    if [[ "$status" == healthy ]]; then
+      return 0
+    fi
     if (( SECONDS >= deadline )); then
       run_logged "$PYTHON_LOG" "${compose[@]}" ps
       printf 'Timed out waiting for %s health\n' "$service" | tee -a "$PYTHON_LOG" >&2
@@ -36,6 +47,10 @@ for service in postgres-test agent-verify web-verify; do
     fi
     sleep 2
   done
+}
+
+for service in postgres-test agent-verify web-verify; do
+  wait_for_health "$service"
 done
 
 run_logged "$PYTHON_LOG" "${compose[@]}" exec -T agent-verify python -m reconciliation_agent.cli migrate
