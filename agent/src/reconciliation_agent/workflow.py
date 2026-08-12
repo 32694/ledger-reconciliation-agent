@@ -86,6 +86,32 @@ def _message_text(message: AnyMessage) -> str:
     )
 
 
+def _parse_draft_analysis(text: str) -> DraftAnalysis:
+    """Parse a strict draft while tolerating markdown/prose around its JSON."""
+    candidate = text.strip()
+    if candidate.startswith("```"):
+        lines = candidate.splitlines()
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            candidate = "\n".join(lines[1:-1]).strip()
+
+    try:
+        return DraftAnalysis.model_validate_json(candidate)
+    except (ValidationError, ValueError) as direct_error:
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(candidate):
+            if character != "{":
+                continue
+            try:
+                value, _ = decoder.raw_decode(candidate[index:])
+            except json.JSONDecodeError:
+                continue
+            try:
+                return DraftAnalysis.model_validate(value)
+            except ValidationError:
+                continue
+        raise direct_error
+
+
 def parse_request(state: AgentState) -> dict[str, Any]:
     """Extract the fixed-format case identifier and requested intent."""
     question = _message_text(state["messages"][-1]) if state["messages"] else ""
@@ -280,8 +306,8 @@ def draft_analysis(state: AgentState) -> dict[str, Any]:
     """Validate the model draft without accepting model-supplied citations."""
     last_message = state["messages"][-1]
     try:
-        draft = DraftAnalysis.model_validate_json(_message_text(last_message))
-    except ValidationError:
+        draft = _parse_draft_analysis(_message_text(last_message))
+    except (ValidationError, ValueError):
         return {
             "draft_analysis": None,
             "proposed_resolution": None,

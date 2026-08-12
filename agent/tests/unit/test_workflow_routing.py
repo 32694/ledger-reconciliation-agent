@@ -4,11 +4,13 @@ from typing import Any, cast
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import Tool
+from pydantic import ValidationError
 
 import reconciliation_agent.workflow as workflow
 from reconciliation_agent.settings import get_settings
 from reconciliation_agent.state import EvidenceStatus
 from reconciliation_agent.workflow import (
+    _parse_draft_analysis,
     build_graph,
     parse_request,
     route_after_validation,
@@ -55,6 +57,28 @@ def test_complete_evidence_routes_to_draft() -> None:
         route_after_validation({"evidence_status": EvidenceStatus.COMPLETE})
         == "draft_analysis"
     )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '```json\n{"status":"READY","summary":"已核对","resolution_recommendation":{"resolution_code":"INTERNAL_CONFIRMED","note":"以内部证据为准"}}\n```',
+        '模型结论如下：\n{"status":"READY","summary":"已核对","resolution_recommendation":{"resolution_code":"INTERNAL_CONFIRMED","note":"以内部证据为准"}}',
+        '{"status":"READY","summary":"渠道交易 ALIPAY-TXN-1001 金额为 10000 分，而内部支付 PAY-1001（状态 SUCCESS）和账本均一致记录为 9900 分，差额 100 分。","resolution_recommendation":{"resolution_code":"INTERNAL_CONFIRMED","note":"内部证据一致，建议人工复核渠道侧差额。"}}',
+    ],
+)
+def test_draft_parser_accepts_json_wrappers_without_relaxing_schema(text: str) -> None:
+    draft = _parse_draft_analysis(text)
+
+    assert draft.status == "READY"
+    assert draft.resolution_recommendation.resolution_code == "INTERNAL_CONFIRMED"
+
+
+def test_draft_parser_still_rejects_invalid_json_schema() -> None:
+    with pytest.raises(ValidationError):
+        _parse_draft_analysis(
+            '{"status":"READY","summary":"已核对","resolution_recommendation":{}}'
+        )
 
 
 @pytest.mark.anyio
