@@ -51,7 +51,8 @@ git branch --set-upstream-to=origin/main main
 正常迁移保持在跟踪 `origin/main` 的 `main` 分支，以便后续安全执行 fast-forward 更新。需要严格复现旧电脑的 tag 或 commit 时，创建命名分支，不要进入 detached HEAD：
 
 ```bash
-git switch -c migration-pinned <tag-or-commit>
+migration_ref="v1.0.0"
+git switch -c migration-pinned "$migration_ref"
 ```
 
 固定版本分支不要执行 `git pull`。完成固定版本的恢复和验收后，先切回 `main`，再按“升级前后的备份与恢复”执行更新。确认 Docker 和 Git 可用：
@@ -125,8 +126,11 @@ git pull --ff-only
 ./scripts/stop.sh
 docker compose --env-file .env -f compose.yaml up -d postgres
 ./scripts/backup.sh backups/failed-upgrade-state.dump
-./scripts/restore.sh backups/before-<commit>.dump
+backup_file="backups/before-20260812-120000.dump"
+./scripts/restore.sh --yes "$backup_file"
 ```
+
+将 `backup_file` 改成你实际核对过的升级前备份路径；示例时间戳只用于展示合法的 shell 文件名。
 
 恢复完成后再启动与该 schema 兼容的代码版本。不要使用 `docker compose down -v`，它会删除数据和缓存 volume。
 

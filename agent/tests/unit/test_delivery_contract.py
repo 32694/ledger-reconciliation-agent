@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -1143,13 +1144,25 @@ def test_migration_guide_keeps_upgrades_on_a_tracking_branch() -> None:
     for required_command in (
         "git switch main",
         "git branch --set-upstream-to=origin/main main",
-        "git switch -c migration-pinned <tag-or-commit>",
+        'migration_ref="v1.0.0"',
+        'git switch -c migration-pinned "$migration_ref"',
     ):
         assert required_command in contents
 
     assert "git switch --detach" not in contents
     assert contents.index("git switch main") < contents.index("git pull --ff-only")
     assert "固定版本分支不要执行 `git pull`" in contents
+
+
+def test_migration_shell_examples_are_copyable_without_angle_bracket_redirection() -> None:
+    migration_guide = REPOSITORY_ROOT / "docs" / "MIGRATION.md"
+    contents = migration_guide.read_text(encoding="utf-8")
+    bash_blocks = re.findall(r"```bash\n(.*?)```", contents, flags=re.DOTALL)
+
+    assert bash_blocks
+    assert not any(re.search(r"<[^>\n]+>", block) for block in bash_blocks)
+    assert 'backup_file="backups/before-20260812-120000.dump"' in contents
+    assert './scripts/restore.sh --yes "$backup_file"' in contents
 
 
 def test_subproject_readmes_are_project_specific_and_credit_upstream() -> None:
