@@ -10,6 +10,7 @@ from reconciliation_agent.tools.common import (
     ReadRepository,
     RepositoryProvider,
     configure_validation_errors,
+    configured_repository_provider,
     invoke_read_tool,
     production_repository_provider,
 )
@@ -63,4 +64,4 @@ def build_audit_timeline_tool(provider: RepositoryProvider) -> BaseTool:
     return configure_validation_errors(get_audit_timeline)
 
 
-get_audit_timeline = build_audit_timeline_tool(production_repository_provider)
+get_audit_timeline = build_audit_timeline_tool(configured_repository_provider())

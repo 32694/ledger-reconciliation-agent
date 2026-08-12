@@ -117,6 +117,19 @@ MODEL_NAME=your-model-name
 
 启动成功后访问 `http://localhost:3000`；Agent API 位于 `http://localhost:2024`。停止服务使用 `./scripts/stop.sh`，停止不会删除数据库或模型缓存 volume。
 
+### 可选：读取 Java 平台证据
+
+Agent 默认使用自己的 `ledger_agent` 合成数据库。需要组合两个项目时，在 `.env` 中切换只读证据源：
+
+```dotenv
+EVIDENCE_PROVIDER=java
+JAVA_PLATFORM_BASE_URL=http://host.docker.internal:8080
+JAVA_PLATFORM_READ_API_KEY=与 Java 的 APP_READ_API_KEY 相同
+JAVA_CASE_ID_MAP={"CASE-1001":{"result_id":"Java 返回的 resultId UUID","channel":"ALIPAY","rule_version":"RULE-ALIPAY-V1"}}
+```
+
+Agent 容器访问宿主机上的 Java 服务使用 `host.docker.internal`，不能写 `localhost`。两个项目仍使用各自数据库；Java API 只读，Agent 不会直接访问 Java PostgreSQL。`JAVA_CASE_ID_MAP` 必须显式维护案件编号、Java `resultId`、渠道和规则版本，映射缺失会返回 `CASE_NOT_FOUND`。
+
 ## 无 Key 验证
 
 完整质量门禁不读取根 `.env`，也不调用真实模型：

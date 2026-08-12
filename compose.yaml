@@ -25,6 +25,10 @@ services:
       target: runtime
     environment:
       DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-ledger_agent}:${POSTGRES_PASSWORD:-change-this-local-password}@postgres:5432/${POSTGRES_DB:-ledger_agent}"
+      EVIDENCE_PROVIDER: "${EVIDENCE_PROVIDER:-local}"
+      JAVA_PLATFORM_BASE_URL: "${JAVA_PLATFORM_BASE_URL:-http://host.docker.internal:8080}"
+      JAVA_PLATFORM_READ_API_KEY: "${JAVA_PLATFORM_READ_API_KEY:-}"
+      JAVA_CASE_ID_MAP: "${JAVA_CASE_ID_MAP:-{}}"
       MODEL_BASE_URL: "${MODEL_BASE_URL:-}"
       MODEL_API_KEY: "${MODEL_API_KEY:-}"
       MODEL_NAME: "${MODEL_NAME:-}"

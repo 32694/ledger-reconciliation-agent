@@ -11,6 +11,7 @@ from reconciliation_agent.tools.common import (
     ReadRepository,
     RepositoryProvider,
     configure_validation_errors,
+    configured_repository_provider,
     invoke_read_tool,
     production_repository_provider,
 )
@@ -62,4 +63,4 @@ def build_payment_tool(provider: RepositoryProvider) -> BaseTool:
     return configure_validation_errors(find_payment_evidence)
 
 
-find_payment_evidence = build_payment_tool(production_repository_provider)
+find_payment_evidence = build_payment_tool(configured_repository_provider())

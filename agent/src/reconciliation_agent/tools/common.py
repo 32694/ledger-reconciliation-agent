@@ -76,6 +76,16 @@ def production_repository_provider() -> Iterator[ReadRepository]:
         yield ReconciliationRepository(session)
 
 
+def configured_repository_provider() -> RepositoryProvider:
+    """Select the local database or Java HTTP adapter from one explicit setting."""
+    settings = get_database_settings()
+    if settings.evidence_provider == "java":
+        from reconciliation_agent.integrations.java_platform import java_repository_provider
+
+        return java_repository_provider(settings)
+    return production_repository_provider
+
+
 def invoke_read_tool(
     provider: RepositoryProvider,
     case_id: str,
@@ -95,6 +105,11 @@ def invoke_read_tool(
         return ErrorResult(
             error="DEPENDENCY_UNAVAILABLE",
             message="证据存储暂时不可用，请稍后重试",
+        ).model_dump_json()
+    except RuntimeError as error:
+        return ErrorResult(
+            error="EVIDENCE_PROVIDER_UNAVAILABLE",
+            message=str(error),
         ).model_dump_json()
 
 

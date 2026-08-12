@@ -14,6 +14,7 @@ from reconciliation_agent.tools.common import (
     CaseIdInput,
     RepositoryProvider,
     configure_validation_errors,
+    configured_repository_provider,
     invoke_read_tool,
     production_repository_provider,
 )
@@ -54,4 +55,4 @@ def build_case_tool(provider: RepositoryProvider) -> BaseTool:
     return configure_validation_errors(get_reconciliation_case)
 
 
-get_reconciliation_case = build_case_tool(production_repository_provider)
+get_reconciliation_case = build_case_tool(configured_repository_provider())

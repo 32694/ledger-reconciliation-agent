@@ -2,6 +2,8 @@
 
 from functools import lru_cache
 
+from typing import Literal
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,6 +15,12 @@ class DatabaseSettings(BaseSettings):
 
     # SecretStr 防止数据库口令在日志和异常对象中被直接打印。
     database_url: SecretStr
+    # 默认使用 Agent 自己的合成库；切换为 java 后，证据工具改走 Java 只读 HTTP API。
+    evidence_provider: Literal["local", "java"] = "local"
+    java_platform_base_url: str = "http://host.docker.internal:8080"
+    java_platform_read_api_key: SecretStr = SecretStr("")
+    # Java 使用 UUID 作为 resultId，Agent 使用 CASE-1001；这里保存显式案件上下文，禁止猜测。
+    java_case_id_map: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     @property
     def database_url_for_sqlalchemy(self) -> str:

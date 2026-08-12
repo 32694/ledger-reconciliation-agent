@@ -11,6 +11,7 @@ from reconciliation_agent.tools.common import (
     ReadRepository,
     RepositoryProvider,
     configure_validation_errors,
+    configured_repository_provider,
     invoke_read_tool,
     production_repository_provider,
 )
@@ -65,4 +66,4 @@ def build_ledger_tool(provider: RepositoryProvider) -> BaseTool:
     return configure_validation_errors(find_ledger_evidence)
 
 
-find_ledger_evidence = build_ledger_tool(production_repository_provider)
+find_ledger_evidence = build_ledger_tool(configured_repository_provider())

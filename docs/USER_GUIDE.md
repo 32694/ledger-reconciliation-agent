@@ -41,6 +41,16 @@ Agent API: http://localhost:2024
 
 首次运行需要下载容器镜像和 Hugging Face embedding 模型，可能比后续启动慢。浏览器打开 `http://localhost:3000`，顶部状态应显示“服务正常”。
 
+## Java 平台联调（可选）
+
+先启动 Java 平台并配置其 `APP_READ_API_KEY`，再在 Agent `.env` 设置 `EVIDENCE_PROVIDER=java`、`JAVA_PLATFORM_BASE_URL=http://host.docker.internal:8080`、相同的 `JAVA_PLATFORM_READ_API_KEY`，以及 `JAVA_CASE_ID_MAP`。映射示例：
+
+```dotenv
+JAVA_CASE_ID_MAP={"CASE-1001":"Java 返回的 resultId UUID"}
+```
+
+Agent 只调用 Java 的 `GET /api/v1/reconciliation/**` 接口，两个项目数据库独立。未配置案件映射时不会猜测 UUID，而是返回案件不存在/映射缺失错误；本地模式 `EVIDENCE_PROVIDER=local` 仍使用原有 seed 数据。映射里的 `channel` 和 `rule_version` 必须与 Agent 规则库中的版本一致，否则 Agent 会按证据不足处理。
+
 ## 3. 分析演示案件
 
 左侧“演示案件”包含 `CASE-1001` 至 `CASE-1004`。选择 `CASE-1001`，输入或直接发送：
