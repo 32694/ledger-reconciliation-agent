@@ -31,34 +31,8 @@ cleanup() {
 trap cleanup EXIT
 
 run_logged "$PYTHON_LOG" "${compose[@]}" build postgres-test agent-verify web-verify
-run_logged "$PYTHON_LOG" "${compose[@]}" up -d postgres-test agent-verify web-verify
-
-deadline=$((SECONDS + ${VERIFY_TIMEOUT_SECONDS:-180}))
-wait_for_health() {
-  local service="$1"
-  while :; do
-    local container_id
-    local status
-    container_id="$("${compose[@]}" ps -q "$service" 2>/dev/null || true)"
-    status=""
-    if [[ -n "$container_id" ]]; then
-      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
-    fi
-    if [[ "$status" == healthy ]]; then
-      return 0
-    fi
-    if (( SECONDS >= deadline )); then
-      run_logged "$PYTHON_LOG" "${compose[@]}" ps
-      printf 'Timed out waiting for %s health\n' "$service" | tee -a "$PYTHON_LOG" >&2
-      exit 1
-    fi
-    sleep 2
-  done
-}
-
-for service in postgres-test agent-verify web-verify; do
-  wait_for_health "$service"
-done
+run_logged "$PYTHON_LOG" "${compose[@]}" up -d --wait --wait-timeout "${VERIFY_TIMEOUT_SECONDS:-180}" \
+  postgres-test agent-verify web-verify
 
 run_logged "$PYTHON_LOG" "${compose[@]}" exec -T agent-verify python -m reconciliation_agent.cli migrate
 run_logged "$PYTHON_LOG" "${compose[@]}" exec -T agent-verify python -m ruff check src tests
