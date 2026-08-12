@@ -31,6 +31,7 @@ const evidenceStatusCopy: Record<string, string> = {
   MISSING_CASE: "未读取到案件记录",
   MISSING_STRUCTURED_FACTS: "支付或账本证据不完整",
   MISSING_RULE: "未找到案件锁定的规则版本",
+  INCONSISTENT_STRUCTURED_FACTS: "支付与账本结构化证据相互矛盾",
   TOOL_BUDGET_EXHAUSTED: "工具调用预算已耗尽",
   INVALID_MODEL_OUTPUT: "模型输出未通过结构校验",
   UNKNOWN: "依赖服务暂时不可用",

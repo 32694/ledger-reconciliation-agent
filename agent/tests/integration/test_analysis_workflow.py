@@ -8,7 +8,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field
 from sqlalchemy.orm import Session
@@ -136,6 +136,22 @@ def _build_test_tools(session: Session) -> list[BaseTool]:
     ]
 
 
+def _replace_tool(
+    tools: list[BaseTool], name: str, payload: dict[str, Any]
+) -> list[BaseTool]:
+    def return_tampered_evidence(case_id: str) -> str:
+        """Return deliberately inconsistent evidence for a workflow test."""
+        del case_id
+        return json.dumps(payload)
+
+    replacement = StructuredTool.from_function(
+        return_tampered_evidence,
+        name=name,
+        description="Return deliberately inconsistent evidence for a workflow test.",
+    )
+    return [replacement if candidate.name == name else candidate for candidate in tools]
+
+
 def _build_test_run_provider(session: Session) -> RunServiceProvider:
     @contextmanager
     def provider() -> Iterator[RunService]:
@@ -216,6 +232,93 @@ async def test_missing_locked_rule_returns_deterministic_refusal(
     assert result["evidence_status"] == EvidenceStatus.MISSING_RULE
     assert result["final_response"]["status"] == "INSUFFICIENT_EVIDENCE"
     assert result["final_response"]["resolution_recommendation"] is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool_name", "payload"),
+    [
+        (
+            "find_payment_evidence",
+            {
+                "case_id": "CASE-1001",
+                "payments": [
+                    {
+                        "payment_id": "PAY-1001",
+                        "channel_transaction_id": "ALIPAY-TXN-1001",
+                        "amount_cents": 9_900,
+                        "status": "FAILED",
+                        "occurred_at": "2026-08-01T08:01:00Z",
+                    }
+                ],
+            },
+        ),
+        (
+            "find_payment_evidence",
+            {
+                "case_id": "CASE-1001",
+                "payments": [
+                    {
+                        "payment_id": "PAY-1001",
+                        "channel_transaction_id": "ALIPAY-TXN-1001",
+                        "amount_cents": 9_800,
+                        "status": "SUCCESS",
+                        "occurred_at": "2026-08-01T08:01:00Z",
+                    }
+                ],
+            },
+        ),
+        (
+            "find_ledger_evidence",
+            {
+                "case_id": "CASE-1001",
+                "entries": [
+                    {
+                        "id": 1,
+                        "business_reference": "PAY-1001",
+                        "account_code": "ALIPAY_CLEARING",
+                        "direction": "DEBIT",
+                        "amount_cents": 9_900,
+                        "posted_at": "2026-08-01T08:02:00Z",
+                    },
+                    {
+                        "id": 2,
+                        "business_reference": "PAY-1001",
+                        "account_code": "CUSTOMER_FUNDS",
+                        "direction": "CREDIT",
+                        "amount_cents": 9_800,
+                        "posted_at": "2026-08-01T08:03:00Z",
+                    },
+                ],
+            },
+        ),
+    ],
+    ids=("failed-payment", "payment-ledger-amount-mismatch", "unbalanced-ledger"),
+)
+async def test_inconsistent_structured_evidence_is_rejected(
+    session: Session, tool_name: str, payload: dict[str, Any]
+) -> None:
+    seed_demo_data(session)
+    tools = _replace_tool(_build_test_tools(session), tool_name, payload)
+    graph = build_graph(
+        model=ScriptedChatModel(
+            responses=_analysis_responses("CASE-1001", "RULE-ALIPAY-V1")
+        ),
+        tools=tools,
+        checkpointer=InMemorySaver(),
+        run_service_provider=_build_test_run_provider(session),
+    )
+
+    result = await graph.ainvoke(
+        {"messages": [("user", "分析 CASE-1001 的差异原因")]},
+        config={"configurable": {"thread_id": f"THREAD-TAMPERED-{tool_name}"}},
+    )
+
+    assert result["evidence_status"] == "INCONSISTENT_STRUCTURED_FACTS"
+    assert result["final_response"]["status"] == "INSUFFICIENT_EVIDENCE"
+    assert result["final_response"]["citations"] == []
+    assert result["final_response"]["resolution_recommendation"] is None
+    assert result.get("confirmation_request") is None
 
 
 @pytest.mark.anyio

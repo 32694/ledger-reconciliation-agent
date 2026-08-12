@@ -245,6 +245,66 @@ def _has_required_structured_facts(
     )
 
 
+def _structured_facts_are_consistent(
+    case: dict[str, Any], facts: dict[str, Any]
+) -> bool:
+    """Check semantic relationships across trusted payment and ledger facts."""
+    payments_value = facts.get("payments")
+    if not isinstance(payments_value, dict):
+        return False
+    if payments_value.get("case_id") != case.get("case_id"):
+        return False
+    payments = payments_value.get("payments")
+    if not isinstance(payments, list):
+        return False
+
+    if case.get("result_type") == ResultType.CHANNEL_ONLY.value:
+        return not payments and not (
+            isinstance(facts.get("ledger"), dict)
+            and facts["ledger"].get("entries")
+        )
+
+    ledger_value = facts.get("ledger")
+    if not isinstance(ledger_value, dict):
+        return False
+    if ledger_value.get("case_id") != case.get("case_id"):
+        return False
+    entries = ledger_value.get("entries")
+    if not isinstance(entries, list) or len(payments) != 1 or not entries:
+        return False
+
+    payment = payments[0]
+    if not isinstance(payment, dict):
+        return False
+    if payment.get("status") != "SUCCESS":
+        return False
+    if payment.get("channel_transaction_id") != case.get("channel_transaction_id"):
+        return False
+    payment_amount = payment.get("amount_cents")
+    if not isinstance(payment_amount, int) or payment_amount <= 0:
+        return False
+
+    debit_total = 0
+    credit_total = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return False
+        if entry.get("business_reference") != payment.get("payment_id"):
+            return False
+        amount = entry.get("amount_cents")
+        if not isinstance(amount, int) or amount <= 0:
+            return False
+        direction = entry.get("direction")
+        if direction == "DEBIT":
+            debit_total += amount
+        elif direction == "CREDIT":
+            credit_total += amount
+        else:
+            return False
+
+    return debit_total == credit_total == payment_amount
+
+
 def validate_evidence(state: AgentState) -> dict[str, Any]:
     """Accept only matching structured facts and exact-version rule citations."""
     facts, citations, errors = _collect_tool_evidence(
@@ -267,6 +327,8 @@ def validate_evidence(state: AgentState) -> dict[str, Any]:
         status = EvidenceStatus.MISSING_CASE.value
     elif not _has_required_structured_facts(case, facts):
         status = EvidenceStatus.MISSING_STRUCTURED_FACTS.value
+    elif not _structured_facts_are_consistent(case, facts):
+        status = EvidenceStatus.INCONSISTENT_STRUCTURED_FACTS.value
     else:
         rule_search = facts.get("rule_search")
         matching_rule = (
@@ -416,6 +478,7 @@ def finalize(state: AgentState) -> dict[str, Any]:
         evidence_status = state.get("evidence_status", EvidenceStatus.UNKNOWN.value)
         error_code = {
             EvidenceStatus.MISSING_RULE.value: "RULE_VERSION_NOT_FOUND",
+            EvidenceStatus.INCONSISTENT_STRUCTURED_FACTS.value: "STRUCTURED_FACTS_INCONSISTENT",
             EvidenceStatus.TOOL_BUDGET_EXHAUSTED.value: "TOOL_BUDGET_EXHAUSTED",
         }.get(evidence_status)
         response = {

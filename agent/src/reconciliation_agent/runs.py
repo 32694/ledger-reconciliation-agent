@@ -22,6 +22,7 @@ ERROR_MESSAGES = {
     "MODEL_UNAVAILABLE": "模型服务暂时不可用，请稍后重试。",
     "DATABASE_UNAVAILABLE": "数据服务暂时不可用，请稍后重试。",
     "RULE_VERSION_NOT_FOUND": "未找到案件锁定版本的规则，当前无法给出确定结论。",
+    "STRUCTURED_FACTS_INCONSISTENT": "支付与账本结构化证据相互矛盾，当前无法给出可靠结论。",
     "TOOL_BUDGET_EXHAUSTED": "证据查询次数已达到上限，当前无法完成分析。",
     "INTERNAL_ERROR": "Agent服务暂时不可用，请稍后重试。",
 }
