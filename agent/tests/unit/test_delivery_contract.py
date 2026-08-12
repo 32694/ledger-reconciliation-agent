@@ -542,6 +542,8 @@ def test_delivery_scripts_are_executable_and_preserve_data() -> None:
     assert "--env-file /dev/null" in verify
     assert "--project-name ledger-reconciliation-agent-verify" in verify
     assert '-f "$ROOT_DIR/compose.yaml"' in verify
+    for profile in ("postgres-test", "agent-verify", "web-verify"):
+        assert f"--profile {profile}" in verify
     assert "reconciliation_agent.evaluation" in verify
     assert "/workspace/artifacts/evaluation.json" in verify
     assert "MODEL_API_KEY" not in verify

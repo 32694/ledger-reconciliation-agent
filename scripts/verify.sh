@@ -15,16 +15,23 @@ run_logged() {
   "$@" 2>&1 | tee -a "$log_file"
 }
 
-compose=(docker compose --project-name ledger-reconciliation-agent-verify -f "$ROOT_DIR/compose.yaml" --env-file /dev/null)
-profiles=(--profile postgres-test --profile agent-verify --profile web-verify)
+compose=(
+  docker compose
+  --project-name ledger-reconciliation-agent-verify
+  -f "$ROOT_DIR/compose.yaml"
+  --env-file /dev/null
+  --profile postgres-test
+  --profile agent-verify
+  --profile web-verify
+)
 
 cleanup() {
-  "${compose[@]}" "${profiles[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-run_logged "$PYTHON_LOG" "${compose[@]}" "${profiles[@]}" build postgres-test agent-verify web-verify
-run_logged "$PYTHON_LOG" "${compose[@]}" "${profiles[@]}" up -d postgres-test agent-verify web-verify
+run_logged "$PYTHON_LOG" "${compose[@]}" build postgres-test agent-verify web-verify
+run_logged "$PYTHON_LOG" "${compose[@]}" up -d postgres-test agent-verify web-verify
 
 deadline=$((SECONDS + ${VERIFY_TIMEOUT_SECONDS:-180}))
 wait_for_health() {
