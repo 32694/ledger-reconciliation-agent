@@ -531,6 +531,7 @@ def test_delivery_scripts_are_executable_and_preserve_data() -> None:
     start = (scripts_root / "start.sh").read_text(encoding="utf-8")
     stop = (scripts_root / "stop.sh").read_text(encoding="utf-8")
     verify = (scripts_root / "verify.sh").read_text(encoding="utf-8")
+    restore = (scripts_root / "restore.sh").read_text(encoding="utf-8")
     assert "set -euo pipefail" in start
     assert "docker compose --env-file .env" in start
     assert '-f "$ROOT_DIR/compose.yaml"' in start
@@ -546,6 +547,8 @@ def test_delivery_scripts_are_executable_and_preserve_data() -> None:
     assert "MODEL_API_KEY" not in verify
     assert "docker inspect --format" in verify
     assert ".State.Health" in verify
+    assert "docker inspect --format" in restore
+    assert ".State.Health" in restore
     migration = "python -m reconciliation_agent.cli migrate"
     assert migration in verify
     assert verify.index(migration) < verify.index("python -m pytest -q")
@@ -935,7 +938,9 @@ def test_restore_yes_checks_health_then_preserves_source_backup(tmp_path: Path) 
     backup.write_bytes(b"custom-format-backup")
     bin_dir, marker = _fake_docker_bin(
         tmp_path,
-        "if [[ \"$*\" == *\" ps \"* ]]; then printf 'postgres healthy\\n'; else cat >/dev/null; fi\n",
+        "if [[ \"$*\" == *\"ps -q postgres\"* ]]; then printf 'container-id\\n'; "
+        "elif [[ \"$*\" == *inspect* ]]; then printf 'healthy\\n'; "
+        "else cat >/dev/null; fi\n",
     )
 
     result = subprocess.run(
@@ -950,7 +955,8 @@ def test_restore_yes_checks_health_then_preserves_source_backup(tmp_path: Path) 
     assert result.returncode == 0, result.stderr
     assert backup.read_bytes() == b"custom-format-backup"
     calls = marker.read_text(encoding="utf-8")
-    assert " ps --format" in calls
+    assert " ps -q" in calls
+    assert "inspect --format" in calls
     assert "pg_restore --clean --if-exists --no-owner" in calls
 
 
@@ -961,7 +967,8 @@ def test_restore_rejects_unhealthy_status_without_running_pg_restore(tmp_path: P
     restore_marker = tmp_path / "pg-restore-called"
     bin_dir, marker = _fake_docker_bin(
         tmp_path,
-        "if [[ \"$*\" == *\" ps \"* ]]; then printf 'postgres unhealthy\\n'; "
+        "if [[ \"$*\" == *\"ps -q postgres\"* ]]; then printf 'container-id\\n'; "
+        "elif [[ \"$*\" == *inspect* ]]; then printf 'unhealthy\\n'; "
         "else touch \"${PG_RESTORE_MARKER}\"; fi\n",
     )
     environment = {
@@ -998,7 +1005,8 @@ def test_restore_failure_preserves_source_and_does_not_export_dotenv_secrets(
     leaked = tmp_path / "leaked-secret"
     bin_dir, marker = _fake_docker_bin(
         tmp_path,
-        "if [[ \"$*\" == *\" ps \"* ]]; then printf 'postgres healthy\\n'; "
+        "if [[ \"$*\" == *\"ps -q postgres\"* ]]; then printf 'container-id\\n'; "
+        "elif [[ \"$*\" == *inspect* ]]; then printf 'healthy\\n'; "
         "else printf '%s' \"${MODEL_API_KEY:-}\" > \"${LEAK_MARKER}\"; cat >/dev/null; exit 9; fi\n",
     )
     environment = {

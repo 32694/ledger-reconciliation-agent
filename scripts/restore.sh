@@ -55,11 +55,19 @@ if [[ ! -f "$ROOT_DIR/.env" ]]; then
 fi
 
 compose=(docker compose --env-file "$ROOT_DIR/.env" -f "$ROOT_DIR/compose.yaml")
-health="$("${compose[@]}" ps --format '{{.Service}} {{.Health}}' postgres 2>/dev/null)" || {
+container_id="$("${compose[@]}" ps -q postgres 2>/dev/null)" || {
   printf '%s\n' '无法检查 postgres 健康状态。' >&2
   exit 1
 }
-if [[ "$health" != "postgres healthy" ]]; then
+if [[ -z "$container_id" ]]; then
+  printf '%s\n' 'postgres 容器不存在，拒绝恢复。' >&2
+  exit 1
+fi
+health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null)" || {
+  printf '%s\n' '无法检查 postgres 健康状态。' >&2
+  exit 1
+}
+if [[ "$health" != healthy ]]; then
   printf 'postgres 未就绪，拒绝恢复：%s\n' "$health" >&2
   exit 1
 fi
