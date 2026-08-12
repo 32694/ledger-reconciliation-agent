@@ -56,6 +56,7 @@ class Base(DeclarativeBase):
 class ReconciliationCase(Base):
     """A discrepancy produced by deterministic reconciliation."""
 
+    # Agent 不负责生成差异案件，只对上游确定性对账产生的案件做调查和建议。
     __tablename__ = "reconciliation_case"
     __table_args__ = (
         CheckConstraint(
@@ -121,6 +122,7 @@ class LedgerEntry(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # business_reference 指向 payment_id，用它校验支付金额与借贷分录是否一致。
     business_reference: Mapped[str] = mapped_column(String(128), nullable=False)
     account_code: Mapped[str] = mapped_column(String(64), nullable=False)
     direction: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -175,6 +177,7 @@ class RuleChunk(Base):
     source: Mapped[str] = mapped_column(String(255), nullable=False)
     section: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # pgvector 保存 512 维归一化向量，检索时计算余弦距离。
     embedding: Mapped[list[float]] = mapped_column(Vector(512), nullable=False)
 
 
@@ -235,6 +238,7 @@ class ConfirmationToken(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 数据库只保存令牌哈希；明文仅返回给当前确认界面，降低泄露后的重放风险。
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     run_id: Mapped[str] = mapped_column(String(64), nullable=False)
     case_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -264,6 +268,7 @@ class AgentRun(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     run_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     question: Mapped[str] = mapped_column(Text, nullable=False)
+    # 保存工具摘要而不是完整隐私数据，便于审计 Agent 实际查询过哪些证据。
     tool_calls: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, default=list, nullable=False
     )

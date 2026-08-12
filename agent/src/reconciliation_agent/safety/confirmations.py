@@ -29,6 +29,7 @@ def _token_hash(token: str) -> str:
 
 
 def _proposal_fingerprint(proposal: ResolutionProposal) -> bytes:
+    # 稳定 JSON 序列化使字段顺序不影响比较，同时把令牌绑定到完整业务参数。
     return json.dumps(
         proposal.model_dump(mode="json"),
         ensure_ascii=True,
@@ -67,6 +68,7 @@ class ConfirmationService:
 
     def issue(self, proposal: ResolutionProposal) -> str:
         """Persist only a token hash and return the one-time clear token."""
+        # 明文令牌只出现一次；泄露数据库也无法直接恢复可用令牌。
         token = secrets.token_urlsafe(32)
         issued_at = self._clock()
         self._session.add(
@@ -86,6 +88,7 @@ class ConfirmationService:
 
     def consume(self, token: str, proposal: ResolutionProposal) -> None:
         """Consume a matching, unexpired token exactly once under a row lock."""
+        # 行锁串行化同一令牌的并发请求，阻止双击或重放造成重复写入。
         stored = self._session.scalar(
             select(ConfirmationToken)
             .where(ConfirmationToken.token_hash == _token_hash(token))

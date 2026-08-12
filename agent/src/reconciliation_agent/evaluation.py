@@ -190,6 +190,7 @@ def evaluate(
     token_usage: dict[str, int] | None = None,
 ) -> EvaluationReport:
     """Compute exact category metrics and retain case-level failures."""
+    # 评估指标全部由固定期望和结构化观察计算，不使用另一个 LLM 充当裁判。
     if len(cases) != len(observations):
         raise ValueError("cases and observations must have equal length")
     by_id = {item.case_id: item for item in observations}
@@ -251,6 +252,7 @@ def evaluate(
 
 
 def _scripted_observation(case: EvaluationCase) -> EvaluationObservation:
+    # scripted 模式验证策略和数据契约，不需要模型、PostgreSQL 或外部 API，适合 CI 快速门禁。
     match = _CASE_PATTERN.search(case.question)
     selected_case_id = match.group(0).upper() if match else None
     if selected_case_id is None or not _VALID_CASE_PATTERN.fullmatch(selected_case_id):

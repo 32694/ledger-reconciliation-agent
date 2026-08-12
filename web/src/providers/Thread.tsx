@@ -26,6 +26,7 @@ const ThreadContext = createContext<ThreadContextType | undefined>(undefined);
 function getThreadSearchMetadata(
   assistantId: string,
 ): { graph_id: string } | { assistant_id: string } {
+  // LangGraph 部署可用 graph_id 或 assistant_id，按传入值形态兼容两种模式。
   if (validate(assistantId)) {
     return { assistant_id: assistantId };
   } else {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const evidenceArtifactSchema = z.object({
+  // 前端先用 Zod 校验后端状态，再渲染证据，避免把任意模型文本当成事实显示。
   caseId: z.string().regex(/^CASE-[0-9]{4}$/),
   status: z.enum(["ANALYSIS_READY", "INSUFFICIENT_EVIDENCE", "RESOLVED"]),
   summary: z.string().default(""),
@@ -34,6 +35,7 @@ const graphStateSchema = z.object({
 });
 
 const statusMap = {
+  // 后端状态码与页面展示状态分离，避免把内部状态名直接暴露给用户。
   READY: "ANALYSIS_READY",
   INSUFFICIENT_EVIDENCE: "INSUFFICIENT_EVIDENCE",
   RESOLVED: "RESOLVED",
@@ -97,6 +99,7 @@ export function publicNoticeFromState(value: unknown): {
   summary: string;
   detail?: string;
 } | null {
+  // Toast 只展示终态提示；READY 由证据面板承载，避免重复显示长结论。
   const state = graphStateSchema.safeParse(value);
   if (!state.success || !state.data.final_response) return null;
 
@@ -146,6 +149,7 @@ export function publicNoticeFromState(value: unknown): {
 export function evidenceArtifactFromState(
   value: unknown,
 ): EvidenceArtifact | null {
+  // 从 LangGraph 状态提取结构化事实和后端 citations；不读取模型自然语言中的“引用”。
   const state = graphStateSchema.safeParse(value);
   if (!state.success || !state.data.case_id || !state.data.final_response) {
     return null;

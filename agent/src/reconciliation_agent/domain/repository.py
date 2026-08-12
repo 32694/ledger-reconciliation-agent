@@ -38,6 +38,7 @@ class AgentRunRepository:
 
     def create(self, *, run_id: str, question: str, status: str) -> AgentRun:
         """Create a new run with empty evidence summaries."""
+        # 每次问答都先创建运行记录，后续可按 run_id 追踪工具、引用和最终结论。
         run = AgentRun(
             run_id=run_id,
             question=question,
@@ -53,6 +54,7 @@ class AgentRunRepository:
 
     def get(self, run_id: str, *, for_update: bool = False) -> AgentRun:
         """Return one run, optionally locking it for a state transition."""
+        # 生命周期更新使用 SELECT FOR UPDATE，避免并发回调相互覆盖运行状态。
         statement = select(AgentRun).where(AgentRun.run_id == run_id)
         if for_update:
             statement = statement.with_for_update()
@@ -85,6 +87,7 @@ class ReconciliationRepository:
 
     def find_payments(self, case: ReconciliationCase) -> list[Payment]:
         """Return internal payments related to a reconciliation case."""
+        # 渠道交易号是渠道案件与内部支付之间的业务关联键。
         if not case.channel_transaction_id:
             return []
         statement = (
@@ -96,6 +99,7 @@ class ReconciliationRepository:
 
     def find_ledger_entries(self, case: ReconciliationCase) -> list[LedgerEntry]:
         """Return ledger entries related to payments for a case."""
+        # 先得到关联支付号，再通过 business_reference 找到账本借贷分录。
         if not case.channel_transaction_id:
             return []
         payment_ids = select(Payment.payment_id).where(
@@ -126,6 +130,7 @@ class ReconciliationRepository:
         self, command: ResolveCaseCommand
     ) -> tuple[CaseResolution, AuditEvent]:
         """Resolve an open case and return its exact audit event."""
+        # 锁定案件行后检查状态，使同一案件在并发确认下也只能成功解决一次。
         case = self._session.scalar(
             select(ReconciliationCase)
             .where(ReconciliationCase.case_id == command.case_id)
@@ -140,6 +145,7 @@ class ReconciliationRepository:
         resolution = CaseResolution.from_command(command, confirmed_at=now)
         audit_event = AuditEvent.for_resolution(command, occurred_at=now)
         case.status = CaseStatus.RESOLVED
+        # 案件状态、解决记录和审计事件由外层同一数据库事务原子提交。
         self._session.add_all([resolution, audit_event])
         self._session.flush()
         return resolution, audit_event

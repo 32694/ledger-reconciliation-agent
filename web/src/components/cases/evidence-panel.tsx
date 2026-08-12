@@ -44,6 +44,7 @@ export function EvidencePanel({
   artifact: EvidenceArtifact | null;
   evidenceStatus?: string;
 }) {
+  // 面板只接收经过 reconciliation.ts 校验的 artifact，避免把未经验证的流式内容当证据。
   if (!artifact) {
     return (
       <aside className="flex h-full flex-col bg-white">

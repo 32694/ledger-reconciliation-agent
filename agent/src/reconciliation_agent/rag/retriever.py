@@ -43,6 +43,7 @@ class RuleRetriever:
         limit: int = 3,
     ) -> list[RuleCitation]:
         """Return nearest citations after mandatory metadata filtering."""
+        # 先验证版本是否存在，再计算向量距离；这样“相似但错误版本”的规则永远不会被返回。
         if isinstance(limit, bool) or not 1 <= limit <= 5:
             raise ValueError("limit must be between 1 and 5")
         if not query.strip():
@@ -61,6 +62,7 @@ class RuleRetriever:
         if len(vectors) != 1 or len(vectors[0]) != 512:
             raise ValueError("query embedding must have 512 dimensions")
 
+        # 规则向量已归一化，余弦距离越小表示语义越接近查询。
         distance = RuleChunk.embedding.cosine_distance(vectors[0]).label("distance")
         statement = (
             select(RuleChunk, distance)

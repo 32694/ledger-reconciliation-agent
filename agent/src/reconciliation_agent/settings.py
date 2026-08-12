@@ -11,6 +11,7 @@ class DatabaseSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # SecretStr 防止数据库口令在日志和异常对象中被直接打印。
     database_url: SecretStr
 
     @property
@@ -22,6 +23,7 @@ class DatabaseSettings(BaseSettings):
 class Settings(DatabaseSettings):
     """Runtime configuration loaded from environment variables."""
 
+    # 模型地址、密钥和名称全部由 .env/环境变量提供，迁移电脑时无需修改代码。
     model_base_url: str
     model_api_key: SecretStr = Field(min_length=1)
     model_name: str
@@ -42,4 +44,5 @@ def get_database_settings() -> DatabaseSettings:
 @lru_cache
 def get_settings() -> Settings:
     """Return cached runtime settings."""
+    # 缓存可避免每次工具或节点调用都重新读取并校验环境变量。
     return Settings()  # type: ignore[call-arg]

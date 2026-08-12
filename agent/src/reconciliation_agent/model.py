@@ -30,6 +30,8 @@ class AsyncModelInvoker(Protocol):
 
 def build_chat_model(settings: Settings) -> BaseChatModel:
     """Create an OpenAI-compatible model without SDK-level retries."""
+    # DeepSeek 等服务实现了 OpenAI 兼容协议，因此可统一通过 ChatOpenAI 接入。
+    # SDK 重试被关闭，避免与下方显式重试叠加而产生不可控的等待时间。
     return ChatOpenAI(
         model=settings.model_name,
         base_url=settings.model_base_url,
@@ -41,6 +43,7 @@ def build_chat_model(settings: Settings) -> BaseChatModel:
 
 
 def _is_retryable_model_error(error: BaseException) -> bool:
+    # 只重试网络、超时和限流等瞬时故障；参数或输出错误应立即暴露。
     return isinstance(
         error,
         TimeoutError
@@ -59,6 +62,7 @@ async def invoke_model_with_retry(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> AIMessage:
     """Invoke a model once plus the configured transient-failure retries."""
+    # 最多执行 1 次初始调用和 max_retries 次重试，等待间隔固定为 1 秒、2 秒。
     retrying = AsyncRetrying(
         sleep=sleep,
         stop=stop_after_attempt(max_retries + 1),

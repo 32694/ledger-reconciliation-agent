@@ -12,6 +12,7 @@ from langgraph.graph import add_messages
 class EvidenceStatus(str, Enum):
     """Outcome of deterministic evidence validation."""
 
+    # 这些状态由代码而不是大模型判定，保证相同证据总能得到相同的放行结果。
     UNKNOWN = "UNKNOWN"
     COMPLETE = "COMPLETE"
     MISSING_CASE = "MISSING_CASE"
@@ -37,12 +38,14 @@ EvidenceStatusValue: TypeAlias = Literal[
 class InputState(TypedDict):
     """Public input accepted by the graph."""
 
+    # add_messages 是 LangGraph reducer：节点返回的新消息会追加到历史，而非覆盖历史。
     messages: Annotated[list[AnyMessage], add_messages]
 
 
 class AgentState(InputState, total=False):
     """Evidence, routing and response state persisted by LangGraph."""
 
+    # 该 TypedDict 是整个状态机的数据契约。total=False 允许节点只返回自己修改的字段。
     case_id: str | None
     run_id: str
     run_persisted: bool

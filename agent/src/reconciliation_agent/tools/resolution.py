@@ -31,6 +31,7 @@ ResolutionActionProvider = Callable[[], AbstractContextManager[ResolutionActionS
 @contextmanager
 def production_resolution_action_provider() -> Iterator[ResolutionActionScope]:
     """Commit token consumption and case resolution in one transaction."""
+    # token 消费、案件更新和审计落库共享同一事务，任何一步失败都会整体回滚。
     with Session(get_tool_engine()) as session, session.begin():
         yield ConfirmationService(session), ReconciliationRepository(session)
 
@@ -43,6 +44,7 @@ def execute_confirmed_resolution(
     confirmed_by: str,
 ) -> ResolutionResult:
     """Consume a bound token and resolve its exact proposal atomically."""
+    # 写工具不暴露给模型的普通 ToolNode，只能由人工确认后的固定图节点调用。
     with provider() as (confirmation_service, repository):
         confirmation_service.consume(confirmation_token, proposal)
         resolution, audit_event = repository.resolve_case_with_audit(

@@ -3,6 +3,7 @@ import { CircleAlert, FileQuestion, Split, WalletCards } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const cases = [
+  // 固定演示案件对应 seed 数据，方便面试时重复演示正常、单边和缺规则场景。
   {
     id: "CASE-1001",
     channel: "支付宝",

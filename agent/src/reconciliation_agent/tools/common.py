@@ -63,6 +63,7 @@ ReadOperation = Callable[[ReadRepository, ReconciliationCase], BaseModel]
 @lru_cache
 def get_tool_engine() -> Engine:
     """Build the shared lazy SQLAlchemy engine for tool invocations."""
+    # 延迟创建引擎，模块导入和离线测试不会立即尝试连接 PostgreSQL。
     settings = get_database_settings()
     return create_engine(settings.database_url_for_sqlalchemy)
 
@@ -70,6 +71,7 @@ def get_tool_engine() -> Engine:
 @contextmanager
 def production_repository_provider() -> Iterator[ReadRepository]:
     """Provide one closed, non-committing repository scope per invocation."""
+    # 每个工具调用独立 Session，且没有 commit，物理上保持只读工具边界。
     with Session(get_tool_engine()) as session:
         yield ReconciliationRepository(session)
 
@@ -80,6 +82,7 @@ def invoke_read_tool(
     operation: ReadOperation,
 ) -> str:
     """Run a read operation and serialize its result or a stable expected error."""
+    # 工具统一输出 JSON 字符串，让工作流能够确定性解析，而非分析任意自然语言。
     try:
         with provider() as repository:
             case = repository.get_case(case_id)

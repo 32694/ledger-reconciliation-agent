@@ -22,11 +22,13 @@ def _alembic_config(database_url: str) -> Config:
 
 
 def _migrate() -> None:
+    # Alembic 负责创建/升级表结构，命令可在新电脑上重复执行。
     database_url = get_database_settings().database_url_for_sqlalchemy
     upgrade(_alembic_config(database_url), "head")
 
 
 def _seed() -> None:
+    # seed 仅写入固定演示案件，便于验证四种典型对账场景。
     database_url = get_database_settings().database_url_for_sqlalchemy
     engine = create_engine(database_url)
     try:
@@ -44,6 +46,7 @@ def _seed() -> None:
 
 
 def _ingest_rules() -> None:
+    # 规则导入同时解析 Markdown、生成本地向量并按 chunk_id 幂等更新 pgvector。
     database_url = get_database_settings().database_url_for_sqlalchemy
     rules_directory = Path(__file__).resolve().parents[2] / "knowledge" / "rules"
     embedding_service = EmbeddingService(get_embedding_settings().embedding_model)
@@ -64,6 +67,7 @@ def _ingest_rules() -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Run database and deterministic data initialization commands."""
+    # CLI 只做初始化运维动作；Agent 在线分析由 LangGraph graph 入口负责。
     parser = argparse.ArgumentParser(prog="reconciliation-agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("migrate").set_defaults(handler=_migrate)

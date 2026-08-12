@@ -41,6 +41,7 @@ def _case_evidence(case: ReconciliationCase) -> CaseEvidence:
 def build_case_tool(provider: RepositoryProvider) -> BaseTool:
     """Build the case tool with an injected repository provider."""
 
+    # 工厂接收 provider，测试可注入内存仓库而无需真实数据库。
     @tool(args_schema=CaseIdInput)
     def get_reconciliation_case(case_id: str) -> str:
         """Read structured case evidence by case ID without writing data."""

@@ -58,6 +58,7 @@ class EmbeddingService:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Return normalized vectors for the supplied texts."""
+        # 归一化后可直接使用余弦距离；空输入不触发模型加载，便于边界测试。
         if not texts:
             return []
         vectors = self._model.encode(texts, normalize_embeddings=True)

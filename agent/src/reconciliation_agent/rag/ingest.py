@@ -67,6 +67,7 @@ class RuleChunkDraft(BaseModel):
 
 def parse_rule_document(text: str) -> ParsedRuleDocument:
     """Parse exact YAML front matter and return the remaining Markdown body."""
+    # front matter 是规则版本的来源事实，格式错误应在入库前失败，而不是等运行时发现。
     match = _FRONT_MATTER.match(text.replace("\r\n", "\n"))
     if match is None:
         raise ValueError("rule document requires YAML front matter")
@@ -95,6 +96,7 @@ def chunk_rule_document(
     rule_version: str,
 ) -> list[RuleChunkDraft]:
     """Split Markdown at level-two headings with stable metadata and IDs."""
+    # 每个二级标题成为一个可引用片段；chunk_id 由内容哈希生成，修改规则会产生新身份。
     chunks: list[RuleChunkDraft] = []
     section: str | None = None
     content_lines: list[str] = []
@@ -156,6 +158,7 @@ def ingest_rule_directory(
     embedding_service: Embedder,
 ) -> int:
     """Upsert all versioned rule documents without committing the transaction."""
+    # 所有文档先解析并批量向量化，再在调用方事务中幂等 upsert，避免半套规则进入数据库。
     documents = _load_documents(rules_directory)
     drafts = [chunk for _, chunks in documents for chunk in chunks]
     vectors = embedding_service.embed([draft.content for draft in drafts])
@@ -164,6 +167,7 @@ def ingest_rule_directory(
             "embedding service must return one 512-dimensional vector per chunk"
         )
 
+    # 清理旧版合成数据，防止测试规则污染正式的版本过滤结果。
     session.execute(delete(RuleChunk).where(RuleChunk.source == _LEGACY_SOURCE))
     vector_by_id = {
         draft.chunk_id: vector for draft, vector in zip(drafts, vectors, strict=True)

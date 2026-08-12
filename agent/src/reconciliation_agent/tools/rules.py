@@ -57,6 +57,7 @@ def _get_embedding_service() -> EmbeddingService:
 @contextmanager
 def production_rule_retriever_provider() -> Iterator[RuleSearchRepository]:
     """Provide a closed repository scope without connecting at import time."""
+    # EmbeddingService 使用本地模型，规则文本和查询内容不发送到聊天模型供应商。
     with Session(get_tool_engine()) as session:
         yield RuleRetriever(session, _get_embedding_service())
 
@@ -82,6 +83,7 @@ def build_rule_search_tool(provider: RuleRetrieverProvider) -> BaseTool:
         limit: int = 3,
     ) -> str:
         """Search read-only reconciliation rules within one exact locked version."""
+        # channel 与 rule_version 是强制过滤条件，向量相似度只负责版本内排序。
         try:
             with provider() as retriever:
                 citations = retriever.search(channel, rule_version, query, limit)

@@ -63,6 +63,7 @@ async function checkGraphStatus(
   apiKey: string | null,
   authScheme?: string,
 ): Promise<boolean> {
+  // 启动时调用 /info 做轻量探活，连接失败只影响提示，不阻塞页面首次渲染。
   try {
     const headers = new Headers();
     if (apiKey) headers.set("X-Api-Key", apiKey);
@@ -101,6 +102,7 @@ function StreamSession({
     }),
     threadId: threadId ?? null,
     fetchStateHistory: true,
+    // LangGraph UI 事件用于人工确认卡片等交互状态，普通消息仍走标准 stream。
     onCustomEvent: (event, options) => {
       if (isUIMessage(event) || isRemoveUIMessage(event)) {
         options.mutate((previous) => ({
@@ -109,6 +111,7 @@ function StreamSession({
         }));
       }
     },
+    // URL 保存 threadId，刷新页面后可继续读取同一 checkpoint 历史。
     onThreadId: (id) => {
       setThreadId(id);
       sleep().then(() => getThreads().then(setThreads).catch(console.error));

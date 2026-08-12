@@ -53,6 +53,7 @@ class PublicError(BaseModel):
 
 def public_error(error: BaseException) -> PublicError:
     """Map a private exception to a stable public error without its text."""
+    # 对外只暴露稳定错误码，避免把数据库 URL、模型供应商响应或堆栈泄露给用户。
     if isinstance(
         error,
         TimeoutError
@@ -79,6 +80,7 @@ def redact_private_error(text: str, *, secrets: Sequence[str] = ()) -> str:
 
 def summarize_tool_messages(messages: Sequence[ToolMessage]) -> list[dict[str, Any]]:
     """Reduce tool outputs to names, status codes and non-sensitive counts."""
+    # 运行审计只记录工具名、结果码和条数，不把支付/账本明细复制进运行表。
     summaries: list[dict[str, Any]] = []
     for message in messages:
         summary: dict[str, Any] = {"name": message.name or "unknown"}
@@ -117,6 +119,7 @@ class RunService:
 
     def start(self, question: str) -> str:
         """Create a uniquely identified running investigation."""
+        # 运行 ID 与 LangGraph thread/checkpoint 解耦，方便后端审计和前端重放。
         run_id = f"RUN-{uuid4()}"
         self._repository.create(
             run_id=run_id,
@@ -127,6 +130,7 @@ class RunService:
 
     def record_tools(self, run_id: str, summaries: list[dict[str, Any]]) -> None:
         """Append sanitized tool summaries in execution order."""
+        # 按执行顺序追加，便于面试演示 Agent 先查什么、后查什么。
         run = self._repository.get(run_id, for_update=True)
         run.tool_calls = [*run.tool_calls, *summaries]
 
@@ -145,6 +149,7 @@ class RunService:
         error: PublicError | None = None,
     ) -> None:
         """Persist a terminal result using only public error text."""
+        # 终态只允许由 finalize 节点写入，且错误内容必须是已脱敏的 PublicError。
         run = self._repository.get(run_id, for_update=True)
         run.status = status.value
         run.citations = [

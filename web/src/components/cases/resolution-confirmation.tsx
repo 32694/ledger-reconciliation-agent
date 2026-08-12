@@ -20,6 +20,7 @@ export function ResolutionConfirmation({
   isLoading: boolean;
   onDecision: (decision: ResolutionDecision) => void;
 }) {
+  // 该组件只发送 approve/reject；具体案件、处理码和令牌由后端 checkpoint 请求绑定。
   const caseId = typeof args.case_id === "string" ? args.case_id : "-";
   const resolutionCode =
     typeof args.resolution_code === "string" ? args.resolution_code : "";

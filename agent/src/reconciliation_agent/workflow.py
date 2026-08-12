@@ -88,6 +88,7 @@ def _message_text(message: AnyMessage) -> str:
 
 def _parse_draft_analysis(text: str) -> DraftAnalysis:
     """Parse a strict draft while tolerating markdown/prose around its JSON."""
+    # 某些兼容模型会在 JSON 外包裹 Markdown 或解释文字；这里抽取对象后仍交给 Pydantic 严格校验。
     candidate = text.strip()
     if candidate.startswith("```"):
         lines = candidate.splitlines()
@@ -114,6 +115,7 @@ def _parse_draft_analysis(text: str) -> DraftAnalysis:
 
 def parse_request(state: AgentState) -> dict[str, Any]:
     """Extract the fixed-format case identifier and requested intent."""
+    # 案件编号和意图用确定性规则解析，不让模型自行选择任意案件或静默执行写操作。
     question = _message_text(state["messages"][-1]) if state["messages"] else ""
     match = _CASE_ID_PATTERN.search(question.upper())
     case_id = match.group(0) if match else None
@@ -195,6 +197,7 @@ def _collect_tool_evidence(
     facts: dict[str, Any] = {}
     citations: list[dict[str, Any]] = []
     errors: list[str] = []
+    # ToolMessage 通过 tool_call_id 回连原调用，才能验证规则检索时实际使用的 channel/version 参数。
     calls = _tool_calls_by_id(messages)
     for message in messages:
         if not isinstance(message, ToolMessage):
@@ -229,6 +232,7 @@ def _collect_tool_evidence(
 def _has_required_structured_facts(
     case: dict[str, Any], facts: dict[str, Any]
 ) -> bool:
+    # CHANNEL_ONLY 合法地没有内部支付；其他差异必须同时具备支付和账本证据。
     result_type = case.get("result_type")
     payments = facts.get("payments")
     ledger = facts.get("ledger")
@@ -249,6 +253,7 @@ def _structured_facts_are_consistent(
     case: dict[str, Any], facts: dict[str, Any]
 ) -> bool:
     """Check semantic relationships across trusted payment and ledger facts."""
+    # 这层不依赖模型结论，而是验证 case_id、交易号、状态、金额和借贷平衡等跨工具关系。
     payments_value = facts.get("payments")
     if not isinstance(payments_value, dict):
         return False
@@ -284,6 +289,7 @@ def _structured_facts_are_consistent(
     if not isinstance(payment_amount, int) or payment_amount <= 0:
         return False
 
+    # 每条分录必须引用同一 payment_id，且借方合计 = 贷方合计 = 支付金额。
     debit_total = 0
     credit_total = 0
     for entry in entries:
@@ -307,6 +313,7 @@ def _structured_facts_are_consistent(
 
 def validate_evidence(state: AgentState) -> dict[str, Any]:
     """Accept only matching structured facts and exact-version rule citations."""
+    # 安全顺序：先检查依赖和结构化证据，再检查语义一致性，最后检查规则版本锁定。
     facts, citations, errors = _collect_tool_evidence(
         _current_turn_messages(state["messages"])
     )
@@ -331,6 +338,7 @@ def validate_evidence(state: AgentState) -> dict[str, Any]:
         status = EvidenceStatus.INCONSISTENT_STRUCTURED_FACTS.value
     else:
         rule_search = facts.get("rule_search")
+        # RAG 命中“相似规则”仍不够，调用参数和每条 citation 都必须等于案件锁定版本。
         matching_rule = (
             isinstance(rule_search, dict)
             and rule_search.get("channel") == case.get("channel")
@@ -366,6 +374,7 @@ def route_after_validation(
 
 def draft_analysis(state: AgentState) -> dict[str, Any]:
     """Validate the model draft without accepting model-supplied citations."""
+    # 模型只负责自然语言总结和建议；引用始终来自工具消息，模型无法伪造证据来源。
     last_message = state["messages"][-1]
     try:
         draft = _parse_draft_analysis(_message_text(last_message))
@@ -431,6 +440,7 @@ def _route_after_confirmation_preparation(
 
 def finalize(state: AgentState) -> dict[str, Any]:
     """Build the stable public response from validated state only."""
+    # 最终响应由状态机拼装，确保缺证据时即使模型声称 READY 也只能返回拒答。
     draft = state.get("draft_analysis")
     resolution_result = state.get("resolution_result")
     decision = state.get("confirmation_decision") or {}
@@ -507,6 +517,7 @@ def build_graph(
     confirmed_by: str = "demo-admin",
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Compile a graph with injectable model, tools and test checkpointer."""
+    # 所有外部依赖均可注入，使单元测试能够替换模型、工具、checkpoint 和写操作。
     tool_list = list(tools or [*READ_TOOLS, search_reconciliation_rules])
     tool_node = ToolNode(tool_list)
     resolved_model = model
@@ -517,6 +528,7 @@ def build_graph(
     runs_provider = run_service_provider or production_run_service_provider
 
     def fail_run(state: AgentState, error: BaseException) -> dict[str, Any]:
+        # 原始异常可能含连接串或供应商细节，只持久化脱敏后的公共错误。
         safe_error = public_error(error)
         run_id = state.get("run_id")
         if state.get("run_persisted") and isinstance(run_id, str):
@@ -539,6 +551,7 @@ def build_graph(
         return {"public_error": safe_error.model_dump()}
 
     def start_run(state: AgentState) -> dict[str, Any]:
+        # 在第一次模型调用前落运行记录，模型或数据库中途失败也能留下可审计轨迹。
         current_messages = _current_turn_messages(state["messages"])
         question = _message_text(current_messages[0]) if current_messages else ""
         try:
@@ -559,6 +572,7 @@ def build_graph(
                 settings = get_settings()
                 resolved_model = build_chat_model(settings)
                 model_max_retries = settings.model_max_retries
+            # bind_tools 让模型只能从显式白名单选择工具，不能直接访问数据库或任意代码。
             bound_model = resolved_model.bind_tools(tool_list)
             prompt = SYSTEM_PROMPT.format(
                 case_id=state.get("case_id") or "UNKNOWN",
@@ -583,6 +597,7 @@ def build_graph(
             last_message = state["messages"][-1]
             if not isinstance(last_message, AIMessage):
                 return {}
+            # 服务端硬截断工具调用，不能只依赖 prompt 中“最多调用 N 次”的软约束。
             remaining = max(0, max_tool_calls - state.get("tool_call_count", 0))
             allowed = last_message.tool_calls[:remaining]
             overflow = last_message.tool_calls[remaining:]
@@ -638,6 +653,7 @@ def build_graph(
                 or not isinstance(run_id, str)
             ):
                 raise ValueError("resolution proposal is required for confirmation")
+            # 令牌与完整 proposal 绑定，确认后修改案件、处理码或备注都会使令牌失效。
             proposal = ResolutionProposal(
                 run_id=run_id,
                 case_id=case_id,
@@ -672,6 +688,7 @@ def build_graph(
         request = state.get("confirmation_request")
         if not isinstance(request, dict):
             return fail_run(state, ValueError("confirmation request is missing"))
+        # interrupt 会把图暂停并写入 checkpoint，等待前端 approve/reject 后从原位置恢复。
         decision_value = interrupt(request)
         try:
             decision = _confirmation_decision(decision_value)
@@ -699,6 +716,7 @@ def build_graph(
             if not isinstance(token, str):
                 raise ValueError("confirmation token is missing")
             proposal = ResolutionProposal.model_validate(approved_args)
+            # 真正写库前再次校验一次性令牌；UI 按钮本身不是权限边界。
             result = execute_confirmed_resolution(
                 action_provider,
                 confirmation_token=token,
@@ -745,6 +763,7 @@ def build_graph(
             return finalize(failed_state)
         return updates
 
+    # 图的主干：解析 -> 调模型/工具循环 -> 确定性校验 -> 可选人工确认 -> 最终响应。
     builder = StateGraph(
         AgentState,
         input_schema=InputState,
