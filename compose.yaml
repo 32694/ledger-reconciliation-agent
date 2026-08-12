@@ -36,13 +36,13 @@ services:
       LANGSMITH_TRACING: "${LANGSMITH_TRACING:-false}"
       LANGSMITH_API_KEY: "${LANGSMITH_API_KEY:-}"
       LANGSMITH_PROJECT: "${LANGSMITH_PROJECT:-ledger-reconciliation-agent}"
-      HF_HOME: /models
-      SENTENCE_TRANSFORMERS_HOME: /models/sentence-transformers
+      HF_HOME: /home/app/.cache/huggingface
+      SENTENCE_TRANSFORMERS_HOME: /home/app/.cache/huggingface/sentence-transformers
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - ledger-huggingface-cache:/models
+      - ledger-huggingface-cache:/home/app/.cache/huggingface
       - ./agent/knowledge:/app/knowledge:ro
     ports:
       - "127.0.0.1:2024:2024"
@@ -106,13 +106,13 @@ services:
       MODEL_MAX_RETRIES: "0"
       MAX_TOOL_CALLS: "8"
       EMBEDDING_MODEL: BAAI/bge-small-zh-v1.5
-      HF_HOME: /models
-      SENTENCE_TRANSFORMERS_HOME: /models/sentence-transformers
+      HF_HOME: /home/app/.cache/huggingface
+      SENTENCE_TRANSFORMERS_HOME: /home/app/.cache/huggingface/sentence-transformers
     depends_on:
       postgres-test:
         condition: service_healthy
     volumes:
-      - ledger-huggingface-test-cache:/models
+      - ledger-huggingface-test-cache:/home/app/.cache/huggingface
       - ./artifacts:/workspace/artifacts
     command: ["sh", "-c", "touch /tmp/agent-verify-ready && exec sleep infinity"]
     healthcheck:

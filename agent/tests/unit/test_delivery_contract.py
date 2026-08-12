@@ -481,7 +481,9 @@ def test_compose_long_lived_agent_and_web_use_runtime_targets_and_dependencies()
 
     assert agent["build"]["target"] == "runtime"
     assert agent["depends_on"]["postgres"]["condition"] == "service_healthy"
-    assert agent["environment"]["HF_HOME"] == "/models"
+    assert agent["environment"]["HF_HOME"] == "/home/app/.cache/huggingface"
+    assert agent["environment"]["SENTENCE_TRANSFORMERS_HOME"] == \
+        "/home/app/.cache/huggingface/sentence-transformers"
     assert "DATABASE_URL" in agent["environment"]
     assert "postgres:5432" in agent["environment"]["DATABASE_URL"]
     assert agent["volumes"]
