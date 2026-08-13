@@ -125,10 +125,10 @@ Agent 默认使用自己的 `ledger_agent` 合成数据库。需要组合两个�
 EVIDENCE_PROVIDER=java
 JAVA_PLATFORM_BASE_URL=http://host.docker.internal:8080
 JAVA_PLATFORM_READ_API_KEY=与 Java 的 APP_READ_API_KEY 相同
-JAVA_CASE_ID_MAP={"CASE-1001":{"result_id":"Java 返回的 resultId UUID","channel":"ALIPAY","rule_version":"RULE-ALIPAY-V1"}}
+JAVA_CASE_ID_MAP='{"CASE-1001":{"result_id":"Java 返回的 resultId UUID","channel":"ALIPAY","rule_version":"RULE-ALIPAY-V1"}}'
 ```
 
-Agent 容器访问宿主机上的 Java 服务使用 `host.docker.internal`，不能写 `localhost`。两个项目仍使用各自数据库；Java API 只读，Agent 不会直接访问 Java PostgreSQL。`JAVA_CASE_ID_MAP` 必须显式维护案件编号、Java `resultId`、渠道和规则版本，映射缺失会返回 `CASE_NOT_FOUND`。
+Agent 容器访问宿主机上的 Java 服务使用 `host.docker.internal`，不能写 `localhost`。两个项目仍使用各自数据库；Java API 只读，Agent 不会直接访问 Java PostgreSQL。`JAVA_CASE_ID_MAP` 必须显式维护案件编号、Java `resultId`、渠道和规则版本，映射缺失会返回 `CASE_NOT_FOUND`。该值必须是合法 JSON，Compose 会自动读取 `.env`；修改后用 `docker compose up -d --force-recreate agent web`，不要用 `docker compose restart`。
 
 ## 无 Key 验证
 

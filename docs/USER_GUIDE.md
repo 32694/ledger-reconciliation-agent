@@ -1,10 +1,20 @@
 # 智能对账分析 Agent 用户指南
 
-本指南用于本地运行合成数据演示。系统不连接真实支付渠道，不应承载真实资金操作。
+本指南用于在一台新电脑上从零运行合成数据演示。系统不连接真实支付渠道，不应承载真实资金操作。Agent 和 Java 平台是两个独立仓库、两个独立 PostgreSQL 数据库；只有启用联调时，Agent 才通过 Java 的只读 HTTP API 读取证据。
 
 ## 1. 准备配置
 
-确认 Docker daemon 已启动，然后在仓库根目录执行：
+先克隆仓库并确认 Docker：
+
+```bash
+git clone https://github.com/32694/ledger-reconciliation-agent.git
+cd ledger-reconciliation-agent
+git --version
+docker info
+docker compose version
+```
+
+`docker info` 必须同时显示 Client 和 Server。若 Docker Hub 拉取镜像出现 `auth.docker.io` 或 `registry-1.docker.io` timeout，这是网络/代理问题，与模型 Key 或数据库密码无关；恢复网络后重试。然后在仓库根目录执行：
 
 ```bash
 cp .env.example .env
@@ -24,6 +34,16 @@ MODEL_NAME=your-model-name
 
 `.env` 已被 Git 忽略。密钥只应保存在本机，不要提交、粘贴到 issue、写入截图或发送到聊天中。`BAAI/bge-small-zh-v1.5` embedding 在本地运行，但这不替代 Agent 推理所需的真实模型。
 
+如果使用 DeepSeek，可填写 OpenAI-compatible 配置（模型名称以控制台实际可用名称为准）：
+
+```dotenv
+MODEL_BASE_URL=https://api.deepseek.com/v1
+MODEL_API_KEY=你的DeepSeek_API_Key
+MODEL_NAME=deepseek-chat
+```
+
+`MODEL_API_KEY` 只用于 Agent 调用模型；它不是 Java 的 `APP_READ_API_KEY`。embedding 模型首次启动会下载到 Docker volume，网络较慢时需要等待几分钟。
+
 ## 2. 启动服务
 
 在仓库根目录运行：
@@ -41,15 +61,33 @@ Agent API: http://localhost:2024
 
 首次运行需要下载容器镜像和 Hugging Face embedding 模型，可能比后续启动慢。浏览器打开 `http://localhost:3000`，顶部状态应显示“服务正常”。
 
-## Java 平台联调（可选）
+确认服务状态和健康接口：
 
-先启动 Java 平台并配置其 `APP_READ_API_KEY`，再在 Agent `.env` 设置 `EVIDENCE_PROVIDER=java`、`JAVA_PLATFORM_BASE_URL=http://host.docker.internal:8080`、相同的 `JAVA_PLATFORM_READ_API_KEY`，以及 `JAVA_CASE_ID_MAP`。映射示例：
-
-```dotenv
-JAVA_CASE_ID_MAP={"CASE-1001":"Java 返回的 resultId UUID"}
+```bash
+docker compose --env-file .env -f compose.yaml ps
+curl --fail http://localhost:2024/ok
 ```
 
-Agent 只调用 Java 的 `GET /api/v1/reconciliation/**` 接口，两个项目数据库独立。未配置案件映射时不会猜测 UUID，而是返回案件不存在/映射缺失错误；本地模式 `EVIDENCE_PROVIDER=local` 仍使用原有 seed 数据。映射里的 `channel` 和 `rule_version` 必须与 Agent 规则库中的版本一致，否则 Agent 会按证据不足处理。
+不要把 `JAVA_CASE_ID_MAP` 写成 Python 字典（单引号键）或未加引号的复杂 shell 值；它必须是合法 JSON。`./scripts/start.sh` 会自动加载 `.env`，Compose 也会自动读取 `.env`，无需手工加载后再启动。修改映射后直接重新创建受影响容器：
+
+```bash
+docker compose --env-file .env -f compose.yaml up -d --force-recreate agent web
+```
+
+## Java 平台联调（可选）
+
+先按 Java 项目的用户手册启动 Java 平台，并确认 `http://localhost:8080/actuator/health` 为 UP。再在 Agent `.env` 设置 `EVIDENCE_PROVIDER=java`、`JAVA_PLATFORM_BASE_URL=http://host.docker.internal:8080`、与 Java `APP_READ_API_KEY` 完全相同的 `JAVA_PLATFORM_READ_API_KEY`，以及 `JAVA_CASE_ID_MAP`。映射示例（必须是合法 JSON；外层单引号仅用于保护 JSON，不要把单引号写进 JSON 值）：
+
+```dotenv
+EVIDENCE_PROVIDER=java
+JAVA_PLATFORM_BASE_URL=http://host.docker.internal:8080
+JAVA_PLATFORM_READ_API_KEY=与Java的APP_READ_API_KEY相同
+JAVA_CASE_ID_MAP='{"CASE-1001":{"result_id":"479fcf41-c113-4ec4-911e-bf5f2fa224c3","channel":"ALIPAY","rule_version":"RULE-ALIPAY-V1"}}'
+```
+
+`result_id` 必须是 Java `GET /api/v1/reconciliation/cases` 返回的真实 `id`，不能把 `CASE-1001` 直接填进去。Agent 容器访问宿主机 Java 必须使用 `host.docker.internal`，不能写 `localhost`。Agent 只调用 Java 的 `GET /api/v1/reconciliation/**` 接口，两个项目数据库独立。修改映射后必须执行上面的 `--force-recreate agent web`；不要用 `docker compose restart`，因为它不会重新读取 Compose 环境变量。映射里的 `channel` 和 `rule_version` 必须与 Agent 规则库中的版本一致，否则 Agent 会按证据不足处理。
+
+联调验收：打开 `http://localhost:3000`，分析映射案件，工具返回应显示 Java 案件、支付、账本和审计证据。金额差异案件停在“等待人工确认”是预期安全行为；如果 Java API 返回 `401`，检查两个 `.env` 中的只读 Key 是否完全一致并重启 Java。
 
 ## 3. 分析演示案件
 

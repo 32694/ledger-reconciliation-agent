@@ -1,6 +1,6 @@
 # 智能对账分析 Agent 迁移指南
 
-本指南用于在新电脑迁移本地演示环境，或在升级前建立可回退点。前置条件是新旧电脑均可使用 Git 和 Docker（含 `docker compose`）。
+本指南用于在新电脑迁移本地演示环境，或在升级前建立可回退点。前置条件是新旧电脑均可使用 Git 和 Docker（含 `docker compose`）。如果新电脑无法从 Docker Hub 拉取镜像，先解决 Docker 网络，或按项目用户手册使用 Java 的 Homebrew 备用方式；Agent 本身仍需要 Docker 来运行 PostgreSQL、Python 和 Web。
 
 ## 迁移对象
 
@@ -70,6 +70,8 @@ cp .env.example .env
 ```
 
 在新电脑编辑 `.env`，设置新的本地数据库密码，并填写 `MODEL_BASE_URL`、`MODEL_API_KEY`、`MODEL_NAME`。`MODEL_API_KEY` 只保存在本机，不要提交到 Git，也不要放进备份 dump。
+
+若启用 Java 联调，同时填写 `EVIDENCE_PROVIDER=java`、`JAVA_PLATFORM_BASE_URL`、`JAVA_PLATFORM_READ_API_KEY` 和合法 JSON 格式的 `JAVA_CASE_ID_MAP`。不要把映射写成 Python 字典或未加引号的复杂 shell 值；Compose 会自动读取 `.env`，修改后用 `docker compose up -d --force-recreate agent web` 重新创建容器。Agent 的 `JAVA_PLATFORM_READ_API_KEY` 必须与 Java 项目的 `APP_READ_API_KEY` 相同，但两个项目的数据库密码不相同也不应相同。
 
 ### 4. 只启动新数据库并恢复
 
